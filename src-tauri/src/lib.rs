@@ -57,7 +57,7 @@ fn read_markdown(path: &Path) -> Result<String, ReadError> {
         return Err(ReadError::TooLarge);
     }
 
-    let mut bytes = Vec::new();
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_DOCUMENT_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(ReadError::Read)?;
@@ -384,7 +384,7 @@ mod tests {
         file.set_len(10 * 1024 * 1024 + 1).unwrap();
         assert_eq!(document.refresh(), Some(1));
         let snapshot = document.snapshot().unwrap();
-        assert!(snapshot.text == "before");
+        assert_eq!(snapshot.text, "before");
         assert!(snapshot
             .error
             .as_deref()

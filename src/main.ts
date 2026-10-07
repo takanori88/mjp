@@ -56,6 +56,7 @@ function externalUrl(anchor: HTMLAnchorElement): string | null {
     const url = new URL(href);
     return ["https:", "http:", "mailto:"].includes(url.protocol) ? url.href : null;
   } catch {
+    // Relative links have no useful destination in a single-file preview.
     return null;
   }
 }
