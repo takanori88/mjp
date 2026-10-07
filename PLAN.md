@@ -86,7 +86,7 @@ Tauriの[fs plugin](https://v2.tauri.app/plugin/file-system/)にもwatch APIは�
 1. 入力Markdownは信頼しない。Markedが生成したHTMLを[DOMPurify](https://github.com/cure53/DOMPurify)でHTMLプロファイルと必要最小限のタグ・属性に絞って無害化してからDOMへ入れる。`script`、イベント属性、フォーム、iframe、SVG/MathML、危険なURLを許可しない。raw HTMLはPhase 1の機能として保証せず、安全なタグ以外は表示しない。
 2. HTMLの無害化に加えて、CSPでアプリ同梱のスクリプト・スタイルとTauri IPCだけを許し、リモートスクリプト・フレーム・オブジェクト・フォーム送信を拒否する。`img-src`は初期段階でリモート・任意ローカルを許可しない。CSPの正確な値はTauriが挿入するハッシュ/nonceとIPCソースを踏まえて実装時に検証する。
 3. リンククリックはアプリ内WebViewを移動させない。`https:`、`http:`、`mailto:`だけを明示的に検査し、OS既定のアプリへ渡す。`javascript:`、`data:`、`file:`、相対リンクはPhase 1では開かない。Tauriの[opener](https://v2.tauri.app/plugin/opener/)を使う場合も、フロントエンドへ無制限のopen権限を与えず、Rust側の限定コマンドでURLを再検査する。WebViewの通常ナビゲーション・新規ウィンドウ要求もアプリ内URL以外は拒否する。
-4. 汎用fs/shell/HTTP権限、外部CDN、ファイルをWebViewへ直接公開する広いasset protocol scopeは使わない。入力が大きすぎる場合の上限とエラー表示は性能測定時に決める。Markdown中のリンクと画像から任意ファイルを読めないことを確認する。
+4. 汎用fs/shell/HTTP権限、外部CDN、ファイルをWebViewへ直接公開する広いasset protocol scopeは使わない。入力ファイルは10 MiBを上限とし、超えた場合は起動時はCLIエラー、Live Reload時は前回の内容を残してエラー表示する。FIFOなど通常ファイル以外は読み込まない（ブロックを避けるためUnixでは`O_NONBLOCK`で開き、開いたハンドルで種別を検査する）。Markdown中のリンクと画像から任意ファイルを読めないことを確認する。
 
 ## 6. 提案ディレクトリ構成
 
@@ -133,5 +133,5 @@ mdq/
 ## 8. 実装前に確認する小さな論点
 
 - `mdq`という名前の公開可否は、配布前にGitHub/Homebrew/crates.io/npm/PyPI/一般Web・商標で確認する。Phase 1のローカル開発は仮称のまま進める。
-- Windows/Linuxは設計対象だがPhase 1の検証対象はmacOS Apple Silicon。WindowsのGUI実行ファイルでは呼び出し元コンソールへのテキスト出力に制約があることが[Tauri CLI plugin](https://v2.tauri.app/plugin/cli/)に記されている。WindowsでのCLIエラー表示と`Ctrl+W`は移植時に実機確認する。
+- Windows/Linuxは設計対象だがPhase 1の検証対象はmacOS Apple Silicon。WindowsのGUI実行ファイルでは呼び出し元コンソールへのテキスト出力に制約があることが[Tauri CLI plugin](https://v2.tauri.app/plugin/cli/)に記されている。WindowsでのCLIエラー表示と`Ctrl+W`は移植時に実機確認する。また、Windowsの本番ビルドではアプリのURLが`http://tauri.localhost`になるため、現在`tauri:`スキームのみを許可している`on_navigation`が初期ページの読み込みを拒否しないか確認する。
 - ローカル画像・相対ファイルリンクは安全なファイル公開範囲の設計が必要なためPhase 1では開かない。閲覧上の必要性が高いと判明した場合、選択ファイル基準で対象を絞る方式を別途設計する。
