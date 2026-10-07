@@ -1,7 +1,8 @@
 use serde::Serialize;
 use std::{
     ffi::OsString,
-    fs, io,
+    fmt, fs,
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::Mutex,
     thread,
@@ -13,6 +14,43 @@ use tauri_plugin_opener::OpenerExt;
 #[cfg(feature = "perf")]
 pub mod perf;
 mod watch;
+
+#[derive(Debug)]
+enum ReadError {
+    Access(io::Error),
+    NotRegular,
+    Read(io::Error),
+}
+
+impl fmt::Display for ReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Access(error) | Self::Read(error) => error.fmt(formatter),
+            Self::NotRegular => formatter.write_str("not a regular file"),
+        }
+    }
+}
+
+fn read_markdown(path: &Path) -> Result<String, ReadError> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        // A FIFO can block during open, before its type can be checked.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let mut file = options.open(path).map_err(ReadError::Access)?;
+    // Inspect the opened handle so replacing the path cannot change what we read.
+    if !file.metadata().map_err(ReadError::Access)?.is_file() {
+        return Err(ReadError::NotRegular);
+    }
+
+    let mut text = String::new();
+    file.read_to_string(&mut text).map_err(ReadError::Read)?;
+    Ok(text)
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
@@ -41,13 +79,13 @@ impl Document {
     }
 
     fn refresh(&self) -> Option<u64> {
-        let mut result = fs::read_to_string(&self.path);
+        let mut result = read_markdown(&self.path);
         for _ in 0..2 {
             if result.is_ok() {
                 break;
             }
             thread::sleep(Duration::from_millis(35));
-            result = fs::read_to_string(&self.path);
+            result = read_markdown(&self.path);
         }
 
         let mut snapshot = self.snapshot.lock().ok()?;
@@ -90,17 +128,16 @@ pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Documen
     }
 
     let label = path.display();
-    let metadata = fs::metadata(&path).map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => format!("{label}: file not found"),
-        _ => format!("{label}: cannot access file: {error}"),
-    })?;
-    if !metadata.is_file() {
-        return Err(format!("{label}: not a regular file"));
-    }
-
-    let text = fs::read_to_string(&path).map_err(|error| match error.kind() {
-        io::ErrorKind::InvalidData => format!("{label}: file is not valid UTF-8"),
-        _ => format!("{label}: cannot read file: {error}"),
+    let text = read_markdown(&path).map_err(|error| match error {
+        ReadError::Access(error) if error.kind() == io::ErrorKind::NotFound => {
+            format!("{label}: file not found")
+        }
+        ReadError::Access(error) => format!("{label}: cannot access file: {error}"),
+        ReadError::NotRegular => format!("{label}: not a regular file"),
+        ReadError::Read(error) if error.kind() == io::ErrorKind::InvalidData => {
+            format!("{label}: file is not valid UTF-8")
+        }
+        ReadError::Read(error) => format!("{label}: cannot read file: {error}"),
     })?;
     let path = fs::canonicalize(&path)
         .map_err(|error| format!("{label}: cannot resolve file path: {error}"))?;
@@ -284,5 +321,66 @@ mod tests {
         assert_eq!(restored.text, "after");
         assert_eq!(restored.error, None);
         fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_markdown_rejects_fifo_without_blocking() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::mpsc};
+
+        let path = std::env::temp_dir().join(format!(
+            "mdq-read-fifo-{}-{:?}.md",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let fifo = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+
+        let (sender, receiver) = mpsc::channel();
+        let worker_path = path.clone();
+        let worker = thread::spawn(move || {
+            sender.send(read_markdown(&worker_path)).unwrap();
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(2));
+        fs::remove_file(&path).unwrap();
+        let error = result.expect("reading a FIFO blocked").unwrap_err();
+        worker.join().unwrap();
+        assert!(matches!(error, ReadError::NotRegular));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refresh_rejects_fifo_without_blocking() {
+        use std::{
+            ffi::CString,
+            os::unix::ffi::OsStrExt,
+            sync::{mpsc, Arc},
+        };
+
+        let path = std::env::temp_dir().join(format!(
+            "mdq-fifo-{}-{:?}.md",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::write(&path, "before").unwrap();
+        let document = Arc::new(load(&path).unwrap());
+        fs::remove_file(&path).unwrap();
+        let fifo = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+
+        let (sender, receiver) = mpsc::channel();
+        let worker_document = Arc::clone(&document);
+        let worker = thread::spawn(move || {
+            sender.send(worker_document.refresh()).unwrap();
+        });
+        let revision = receiver.recv_timeout(Duration::from_secs(2));
+        fs::remove_file(&path).unwrap();
+        let revision = revision.expect("refresh blocked while opening a FIFO");
+        worker.join().unwrap();
+
+        assert_eq!(revision, Some(1));
+        let snapshot = document.snapshot().unwrap();
+        assert_eq!(snapshot.text, "before");
+        assert!(snapshot.error.as_deref().unwrap().contains("regular file"));
     }
 }
