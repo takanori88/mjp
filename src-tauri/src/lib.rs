@@ -15,10 +15,14 @@ use tauri_plugin_opener::OpenerExt;
 pub mod perf;
 mod watch;
 
+const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
+
 #[derive(Debug)]
 enum ReadError {
     Access(io::Error),
     NotRegular,
+    TooLarge,
+    InvalidUtf8,
     Read(io::Error),
 }
 
@@ -27,6 +31,8 @@ impl fmt::Display for ReadError {
         match self {
             Self::Access(error) | Self::Read(error) => error.fmt(formatter),
             Self::NotRegular => formatter.write_str("not a regular file"),
+            Self::TooLarge => formatter.write_str("file is too large (max 10 MiB)"),
+            Self::InvalidUtf8 => formatter.write_str("file is not valid UTF-8"),
         }
     }
 }
@@ -41,15 +47,24 @@ fn read_markdown(path: &Path) -> Result<String, ReadError> {
         // A FIFO can block during open, before its type can be checked.
         options.custom_flags(libc::O_NONBLOCK);
     }
-    let mut file = options.open(path).map_err(ReadError::Access)?;
+    let file = options.open(path).map_err(ReadError::Access)?;
     // Inspect the opened handle so replacing the path cannot change what we read.
-    if !file.metadata().map_err(ReadError::Access)?.is_file() {
+    let metadata = file.metadata().map_err(ReadError::Access)?;
+    if !metadata.is_file() {
         return Err(ReadError::NotRegular);
     }
+    if metadata.len() > MAX_DOCUMENT_BYTES {
+        return Err(ReadError::TooLarge);
+    }
 
-    let mut text = String::new();
-    file.read_to_string(&mut text).map_err(ReadError::Read)?;
-    Ok(text)
+    let mut bytes = Vec::new();
+    file.take(MAX_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(ReadError::Read)?;
+    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(ReadError::TooLarge);
+    }
+    String::from_utf8(bytes).map_err(|_| ReadError::InvalidUtf8)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -134,9 +149,8 @@ pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Documen
         }
         ReadError::Access(error) => format!("{label}: cannot access file: {error}"),
         ReadError::NotRegular => format!("{label}: not a regular file"),
-        ReadError::Read(error) if error.kind() == io::ErrorKind::InvalidData => {
-            format!("{label}: file is not valid UTF-8")
-        }
+        ReadError::TooLarge => format!("{label}: file is too large (max 10 MiB)"),
+        ReadError::InvalidUtf8 => format!("{label}: file is not valid UTF-8"),
         ReadError::Read(error) => format!("{label}: cannot read file: {error}"),
     })?;
     let path = fs::canonicalize(&path)
@@ -321,6 +335,68 @@ mod tests {
         assert_eq!(restored.text, "after");
         assert_eq!(restored.error, None);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn load_rejects_oversized_file() {
+        let path = std::env::temp_dir().join(format!(
+            "mdq-oversized-{}-{:?}.md",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(10 * 1024 * 1024 + 1).unwrap();
+        let result = load(&path);
+        fs::remove_file(&path).unwrap();
+        match result {
+            Err(message) => assert!(message.contains("file is too large")),
+            Ok(_) => panic!("oversized file was accepted"),
+        }
+    }
+
+    #[test]
+    fn load_accepts_file_at_size_limit() {
+        let path = std::env::temp_dir().join(format!(
+            "mdq-size-limit-{}-{:?}.md",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_DOCUMENT_BYTES).unwrap();
+        let document = load(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            document.snapshot.lock().unwrap().text.len() as u64,
+            MAX_DOCUMENT_BYTES
+        );
+    }
+
+    #[test]
+    fn refresh_preserves_content_when_file_grows_too_large() {
+        let path = std::env::temp_dir().join(format!(
+            "mdq-growing-{}-{:?}.md",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::write(&path, "before").unwrap();
+        let document = load(&path).unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(10 * 1024 * 1024 + 1).unwrap();
+        assert_eq!(document.refresh(), Some(1));
+        let snapshot = document.snapshot().unwrap();
+        assert!(snapshot.text == "before");
+        assert!(snapshot
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("file is too large"));
+
+        file.set_len(6).unwrap();
+        assert_eq!(document.refresh(), Some(2));
+        let restored = document.snapshot().unwrap();
+        assert_eq!(restored.text, "before");
+        assert_eq!(restored.error, None);
+        fs::remove_file(&path).unwrap();
     }
 
     #[cfg(unix)]
