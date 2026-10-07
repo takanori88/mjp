@@ -49,6 +49,17 @@ function perf(stage: string): void {
   }
 }
 
+function externalUrl(anchor: HTMLAnchorElement): string | null {
+  const href = anchor.getAttribute("href");
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    return ["https:", "http:", "mailto:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function render(snapshot: Snapshot): void {
   if (snapshot.revision < lastRevision) return;
   lastRevision = snapshot.revision;
@@ -65,6 +76,12 @@ function render(snapshot: Snapshot): void {
     FORBID_ATTR: ["style"],
   });
   perf("dom_inserted");
+  for (const anchor of article.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    const url = externalUrl(anchor);
+    if (!url) continue;
+    const title = anchor.getAttribute("title");
+    anchor.setAttribute("title", title === null ? url : `${url}\n${title}`);
+  }
   for (const code of article.querySelectorAll<HTMLElement>("pre code")) {
     const language = [...code.classList]
       .find((name) => name.startsWith("language-"))
@@ -171,16 +188,8 @@ article.addEventListener("click", (event) => {
   const anchor = target.closest<HTMLAnchorElement>("a[href]");
   if (!anchor) return;
   event.preventDefault();
-  const href = anchor.getAttribute("href");
-  if (!href) return;
-  try {
-    const url = new URL(href);
-    if (["https:", "http:", "mailto:"].includes(url.protocol)) {
-      void invoke("open_external", { url: url.href });
-    }
-  } catch {
-    // Relative links have no useful destination in a single-file preview.
-  }
+  const url = externalUrl(anchor);
+  if (url) void invoke("open_external", { url });
 });
 
 await listen("document-changed", () => { void load(); });
