@@ -89,6 +89,8 @@ The first choice is Rust [notify](https://docs.rs/notify/latest/notify/) with `r
 
 Retry briefly after a transient read failure. If it persists, retain the last valid content and display an error; clear the error when the file recovers. First preserve the absolute scroll offset, clamping it to the new maximum if the document shrinks. Release watch resources on exit. The `notify` documentation notes that events may fail on network filesystems, so the first release only guarantees local files; consider polling later if needed.
 
+Follow the selected path across saves rather than pinning a file identity. This preserves both editor saves that rename a temporary file over the original and deletion followed by recreation. File type and size checks continue to use the opened handle, keeping validation and reading on the same object. This choice matches a live preview of an editable local file.
+
 Tauri's [filesystem plugin](https://v2.tauri.app/plugin/file-system/) also has a watch API, but using it would require frontend file-access scope and permissions. Keeping reads and watching in Rust preserves a smaller security boundary.
 
 ## 5. Security and link policy
