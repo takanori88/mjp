@@ -35,6 +35,7 @@ Phase 1で扱わない機能は[PROJECT.md](PROJECT.md)の第6・7・12・14節�
 - 設定上のウィンドウは`create: false`にでき、検証後だけRust側で作成できる。これによりエラー時に空のウィンドウを出さずに済む。出典: [Tauri Configuration](https://v2.tauri.app/reference/config/)。
 - Rustからフロントエンドへの変更通知はイベント、フロントエンドからの本文取得は限定したコマンドで行う。読み込みの主体をRustにまとめる。出典: [Calling Rust from the Frontend](https://v2.tauri.app/develop/calling-rust/)。
 - アプリのコマンドをビルド時のマニフェストに宣言し、mainウィンドウには使用する3コマンドを許可する。`perf`機能では計測コマンドと別サブディレクトリのcapabilityを追加で選択する。通常ビルドはそのcapabilityを除外し、以前の計測ビルドが生成した計測用permissionも削除する。同じチェックアウトでビルド方式を切り替えても設定が再現できるようにするためである。フロントエンドに公開するリンク処理は引き続きRustのopenerラッパーに限定する。
+- デバッグ時のナビゲーションには`build.devUrl`のoriginを使い、開発サーバーのアドレス変更にRust側の修正を不要とする。この許可はdebug assertionsが有効な場合だけコンパイルし、同梱ページのナビゲーションは変更しない。
 - WebViewの権限はcapabilitiesで絞り、CSPは設定しない限り有効にならない。ファイルシステム・shell等の汎用プラグインをフロントエンドに与えない。出典: [Capabilities](https://v2.tauri.app/security/capabilities/)、[CSP](https://v2.tauri.app/security/csp/)。
 
 ### Markdownレンダラ候補

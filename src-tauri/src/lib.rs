@@ -11,6 +11,7 @@ use std::{
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
+mod navigation;
 #[cfg(feature = "perf")]
 pub mod perf;
 mod watch;
@@ -239,16 +240,11 @@ pub fn run(document: Document) -> tauri::Result<()> {
                 app.state::<Document>()
                     .set_warning(format!("Live reload is unavailable: {error}"));
             }
+            let dev_url = app.config().build.dev_url.clone();
             let window =
                 tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
                     .title(format!("{title} — mjp"))
-                    .on_navigation(|url| {
-                        url.scheme() == "tauri"
-                            || (cfg!(debug_assertions)
-                                && url.scheme() == "http"
-                                && url.host_str() == Some("localhost")
-                                && url.port() == Some(1420))
-                    })
+                    .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
                     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                     .build()?;
             #[cfg(feature = "perf")]

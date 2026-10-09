@@ -35,6 +35,7 @@ A later UX decision added a small set of Vim-style keys so reading and closing c
 - The configured window can use `create: false` and be created from Rust only after validating the file. This prevents an empty window on a CLI error. Source: [Tauri configuration](https://v2.tauri.app/reference/config/).
 - Use events to notify the frontend of changes and a narrow command to fetch document content. Keep file reading in Rust. Source: [calling Rust from the frontend](https://v2.tauri.app/develop/calling-rust/).
 - Declare app commands in the build manifest and grant the main window the three commands it uses. The `perf` feature additionally selects the measurement command and its capability from a separate subdirectory. Normal builds exclude that capability and remove the generated measurement permission left by an earlier feature build, so switching build modes in one checkout is repeatable. The Rust opener wrapper remains the only link-opening interface exposed to the frontend.
+- Debug navigation uses the origin from `build.devUrl`, so changing the development server address requires no matching Rust edit. That allowance is compiled only with debug assertions; packaged-page navigation is unchanged.
 - Restrict WebView permissions through capabilities. CSP is not active unless configured. Do not give the frontend general filesystem or shell plugin access. Sources: [capabilities](https://v2.tauri.app/security/capabilities/), [CSP](https://v2.tauri.app/security/csp/).
 
 ### Markdown renderer candidates
