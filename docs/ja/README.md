@@ -49,7 +49,7 @@ npm run tauri build -- --bundles app
 ./src-tauri/target/release/mjp README.md
 ```
 
-GitHub リポジトリ名は旧名の `mdq` のままですが、生成されるコマンドは `mjp` です。アプリバンドルは `src-tauri/target/release/bundle/macos/` に作られます。
+生成されるコマンドは `mjp` です。アプリバンドルは `src-tauri/target/release/bundle/macos/` に作られます。
 
 ## 開発
 

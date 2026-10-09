@@ -49,7 +49,7 @@ npm run tauri build -- --bundles app
 ./src-tauri/target/release/mjp README.md
 ```
 
-The GitHub repository still has its original `mdq` name; the built command is `mjp`. The app bundle is under `src-tauri/target/release/bundle/macos/`.
+The built command is `mjp`. The app bundle is under `src-tauri/target/release/bundle/macos/`.
 
 ## Development
 

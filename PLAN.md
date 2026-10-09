@@ -6,7 +6,7 @@ Researched: 2026-10-06
 
 Initial target: macOS Apple Silicon. Implementation began after this plan.
 
-On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Preview.) because an existing Homebrew formula already used the `mdq` command. The CLI, packages, and app identifier were renamed together; the Git repository name and history were kept. The design and measurement assumptions below were not changed by the rename. This document also records subsequent implementation decisions where noted.
+On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Preview.) because an existing Homebrew formula already used the `mdq` command. The CLI, packages, and app identifier were renamed together; the GitHub repository was renamed to `mjp` as well, and the history was kept. The design and measurement assumptions below were not changed by the rename. This document also records subsequent implementation decisions where noted.
 
 ## 1. Requirements and completion criteria
 
