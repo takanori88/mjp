@@ -243,6 +243,8 @@ Markdown以外のファイルをどう扱うかは実装前に検討する。
 - fenced code blocks
 - horizontal rules
 
+現在の実装は128 KiBまでのファイルをMarkdownとして整形する。それを超えるファイルは10 MiBまで全文をプレーンテキストで表示し、案内を出す。どちらも自動更新に対応し、大きな入力でも素早く確認できる表示を選ぶ。
+
 ---
 
 ## Syntax Highlight

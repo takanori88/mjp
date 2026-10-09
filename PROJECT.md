@@ -118,6 +118,8 @@ The original plan left handling of non-Markdown extensions for implementation. T
 
 Support at least CommonMark and GitHub Flavored Markdown, including headings, paragraphs, bold, italic, strikethrough, links, blockquotes, ordered and unordered lists, task lists, tables, inline code, fenced code blocks, and horizontal rules.
 
+The current implementation formats files up to 128 KiB as Markdown. Larger files, up to 10 MiB, show their complete source as plain text with a notice. Both modes support live reload; the display choice keeps a quick preview useful for larger inputs.
+
 ### Syntax highlighting
 
 Highlight fenced code blocks, starting with common programming languages:

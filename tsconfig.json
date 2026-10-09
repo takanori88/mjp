@@ -5,6 +5,7 @@
     "module": "ESNext",
     "lib": ["ES2022", "DOM"],
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "noEmit": true,
     "strict": true

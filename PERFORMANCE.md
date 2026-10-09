@@ -2,7 +2,7 @@
 
 [日本語](docs/ja/PERFORMANCE.md)
 
-These figures were measured on 2026-10-06 under the former name `mdq`. The project was renamed to `mjp` on 2026-10-08; performance has not been remeasured since the rename. The original command name and environment variable below are retained as historical facts.
+The first measurements below were taken on 2026-10-06 under the former name `mdq`. The project was renamed to `mjp` on 2026-10-08. The original command name and environment variable are retained as historical facts. The final section records the current display-mode measurements.
 
 Measured: 2026-10-06 (JST)
 
@@ -62,3 +62,15 @@ npm run tauri build -- --bundles app
 ```
 
 Only the current measurement build writes stage timestamps to CSV with `MJP_PERF_LOG=/path/to/log.csv mjp <file>`. Setting `MJP_PERF_LOG` on a normal build does not enable recording.
+
+## Display modes measured on 2026-10-09
+
+On macOS 26.6.2 / arm64, a Tauri release measurement build was tested at the 128 KiB Markdown limit, one byte above it, and at the 10 MiB file limit. Larger inputs use complete plain-text display. Each cell below is one launch, measured from GUI process entry to the second animation frame after content insertion; it excludes the short CLI parent phase and is a display proxy, not a precise pixel-presentation timestamp.
+
+| Input pattern | 128 KiB, Markdown | 128 KiB + 1 B, plain text | 10 MiB, plain text |
+| --- | ---: | ---: | ---: |
+| Repeated short JavaScript fences | 1.181 s | 0.956 s | 1.795 s |
+| Repeated 64-level quote prefixes with list text | 1.368 s | 0.878 s | 1.548 s |
+| Repeated links, 16 per paragraph | 0.765 s | 1.009 s | 1.136 s |
+
+Inputs were ASCII patterns repeated and truncated to the exact byte size. All nine launches met the selected two-second target on this machine. These observations do not establish a worst-case bound for every input or hardware configuration. Plain-text launches emitted no Markdown-parsed mark, confirming that mode selection happened before parsing. DOM tests separately check the byte boundary, multibyte text, return to formatted display, and error/warning updates without replacing unchanged content.

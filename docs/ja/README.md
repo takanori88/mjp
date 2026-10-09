@@ -27,6 +27,8 @@ mjp <file>
 
 読み取り可能な通常の UTF-8 ファイルを1つ指定します。上限は 10 MiB です。相対パスと絶対パスに対応し、拡張子による制限はありません。エラーはウィンドウを開く前にターミナルへ出力します。現時点では CLI オプションはありません。
 
+128 KiB以下のファイルはMarkdownとして整形します。これを超えるファイルは初回表示を速く保つため、案内とともに全文をプレーンテキストで表示します。どちらの表示でも自動更新できます。
+
 `http:`、`https:`、`mailto:` のリンクは OS の既定アプリで開きます。相対リンクと画像は現在のプレビューでは開いたり読み込んだりしません。
 
 ## キーボード操作
@@ -53,15 +55,16 @@ npm run tauri build -- --bundles app
 
 ## 開発
 
-CLI、ウィンドウ、ファイル監視には Tauri 2 と Rust を使用します。プレビューは Vanilla TypeScript、Vite、markdown-it、DOMPurify、highlight.js で構成しています。開発・検証対象は現在 macOS Apple Silicon です。ビルドには Rust 1.90 以降、Node.js `^20.19.0` または `>=22.12.0`、npm、Tauri が要求する macOS 開発ツールが必要です。
+CLI、ウィンドウ、ファイル監視には Tauri 2 と Rust を使用します。プレビューは Vanilla TypeScript、Vite、markdown-it、DOMPurify、highlight.js で構成しています。開発・検証対象は現在 macOS Apple Silicon です。Rust 1.90以降、Node.js 24.xの24.15.0以降、npm、Tauriが要求するmacOS開発ツールを使用してください。DOMテストにはjsdomとTypeScriptに対応したNode標準テストランナーを使います。
 
 ```sh
 npm ci
+npm test
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri build -- --bundles app
 ```
 
-製品の目的は [PROJECT.md](PROJECT.md)、設計判断は [PLAN.md](PLAN.md)、改名前の測定結果は [PERFORMANCE.md](PERFORMANCE.md) を参照してください。
+製品の目的は [PROJECT.md](PROJECT.md)、設計判断は [PLAN.md](PLAN.md)、測定結果は [PERFORMANCE.md](PERFORMANCE.md) を参照してください。
 
 ルートの英語版が標準文書で、日本語版は `docs/ja/` に置いています。

@@ -60,6 +60,8 @@ Highlight only languages explicitly named on code fences; do not auto-detect. Re
 
 Highlighted code uses a separate DOMPurify configuration that preserves text and spans with highlight classes, including nested scopes and embedded languages. Keeping this transformation in a small function with a replaceable highlighter lets tests check both normal formatting and the allowed output structure independently. DOM tests use jsdom only during development; the application continues to use the WebView DOM.
 
+Render Markdown only up to 128 KiB of UTF-8 input. Check this before parsing; larger documents, up to the existing 10 MiB file limit, display their complete source as plain text with a notice. A byte limit keeps the decision inexpensive and independent of Markdown structure. The selected target is an initial render within two seconds on the measured Mac for the three input families in [PERFORMANCE.md](PERFORMANCE.md); this is a measured target, not a guarantee for every document or device. Status updates remain independent of whether the text changed, so read errors and watcher warnings take precedence over the plain-text notice. Keep the existing IPC snapshot format during this change.
+
 ### Alternative architecture
 
 SwiftUI plus WKWebView might yield an even smaller macOS-only design, but would require revisiting the Windows/Linux plan. The first choice is Tauri 2, Vanilla TypeScript, and Vite. React adds little for a view with only document, error, and theme state. Vite is needed for builds, not at runtime; installed users should not need Node.js or a development server. If Tauri/WebView startup dominates, measure it before changing frontend frameworks.
