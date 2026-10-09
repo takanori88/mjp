@@ -44,7 +44,7 @@ let lastText: string | null = null;
 let requestNumber = 0;
 
 function perf(stage: string): void {
-  if (import.meta.env.VITE_MDQ_PERF === "1") {
+  if (import.meta.env.VITE_MJP_PERF === "1") {
     void invoke("perf_mark", { stage, renderedMs: performance.timeOrigin + performance.now() });
   }
 }
@@ -98,11 +98,11 @@ function render(snapshot: Snapshot): void {
   perf("highlight_done");
   window.scrollTo(0, scrollY);
 
-  if (import.meta.env.VITE_MDQ_PERF === "1" && lastRevision === 0) {
+  if (import.meta.env.VITE_MJP_PERF === "1" && lastRevision === 0) {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       perf("first_render");
     }));
-  } else if (import.meta.env.VITE_MDQ_PERF === "1") {
+  } else if (import.meta.env.VITE_MJP_PERF === "1") {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       perf("reload_render");
     }));

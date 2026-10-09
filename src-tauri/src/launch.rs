@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-pub const GUI_CHILD_ENV: &str = "MDQ_GUI_CHILD";
+pub const GUI_CHILD_ENV: &str = "MJP_GUI_CHILD";
 
 pub fn spawn_gui(path: &Path) -> io::Result<()> {
     let executable = std::env::current_exe()?.canonicalize()?;

@@ -132,9 +132,9 @@ impl Document {
 
 pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Document, String> {
     let mut args = args.into_iter();
-    let input = args.next().ok_or("usage: mdq <file>")?;
+    let input = args.next().ok_or("usage: mjp <file>")?;
     if args.next().is_some() {
-        return Err("expected exactly one file (usage: mdq <file>)".into());
+        return Err("expected exactly one file (usage: mjp <file>)".into());
     }
 
     let path = PathBuf::from(input);
@@ -212,7 +212,7 @@ pub fn run(document: Document) -> tauri::Result<()> {
         .path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "mdq".into());
+        .unwrap_or_else(|| "mjp".into());
     let watched_path = document.path.clone();
 
     #[cfg(feature = "perf")]
@@ -241,7 +241,7 @@ pub fn run(document: Document) -> tauri::Result<()> {
             }
             let window =
                 tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
-                    .title(format!("{title} — mdq"))
+                    .title(format!("{title} — mjp"))
                     .on_navigation(|url| {
                         url.scheme() == "tauri"
                             || (cfg!(debug_assertions)
@@ -287,7 +287,7 @@ mod tests {
     fn distinguishes_missing_and_directory() {
         let directory = std::env::temp_dir();
         assert!(load(&directory).unwrap_err().contains("regular file"));
-        let missing = directory.join(format!("mdq-missing-{}", std::process::id()));
+        let missing = directory.join(format!("mjp-missing-{}", std::process::id()));
         assert!(load(&missing).unwrap_err().contains("file not found"));
     }
 
@@ -295,17 +295,17 @@ mod tests {
     fn reads_absolute_and_relative_paths() {
         let absolute = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../PROJECT.md");
         let document = load(&absolute).unwrap();
-        assert!(document.snapshot().unwrap().text.starts_with("# mdq"));
+        assert!(document.snapshot().unwrap().text.starts_with("# mjp"));
         assert!(document.path.is_absolute());
 
         let relative = PathBuf::from("../PROJECT.md");
         let document = load(&relative).unwrap();
-        assert!(document.snapshot().unwrap().text.starts_with("# mdq"));
+        assert!(document.snapshot().unwrap().text.starts_with("# mjp"));
     }
 
     #[test]
     fn rejects_non_utf8_content() {
-        let path = std::env::temp_dir().join(format!("mdq-invalid-{}.md", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mjp-invalid-{}.md", std::process::id()));
         fs::write(&path, [0xff, 0xfe]).unwrap();
         let result = load(&path);
         fs::remove_file(path).unwrap();
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn refresh_preserves_content_during_delete_and_recovers() {
         let path = std::env::temp_dir().join(format!(
-            "mdq-refresh-{}-{:?}.md",
+            "mjp-refresh-{}-{:?}.md",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn load_rejects_oversized_file() {
         let path = std::env::temp_dir().join(format!(
-            "mdq-oversized-{}-{:?}.md",
+            "mjp-oversized-{}-{:?}.md",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn load_accepts_file_at_size_limit() {
         let path = std::env::temp_dir().join(format!(
-            "mdq-size-limit-{}-{:?}.md",
+            "mjp-size-limit-{}-{:?}.md",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn refresh_preserves_content_when_file_grows_too_large() {
         let path = std::env::temp_dir().join(format!(
-            "mdq-growing-{}-{:?}.md",
+            "mjp-growing-{}-{:?}.md",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -405,7 +405,7 @@ mod tests {
         use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::mpsc};
 
         let path = std::env::temp_dir().join(format!(
-            "mdq-read-fifo-{}-{:?}.md",
+            "mjp-read-fifo-{}-{:?}.md",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -434,7 +434,7 @@ mod tests {
         };
 
         let path = std::env::temp_dir().join(format!(
-            "mdq-fifo-{}-{:?}.md",
+            "mjp-fifo-{}-{:?}.md",
             std::process::id(),
             std::thread::current().id()
         ));

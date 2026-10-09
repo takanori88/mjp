@@ -11,7 +11,7 @@ pub fn mark_now(label: &str) {
 }
 
 pub fn mark(label: &str, epoch_us: u128) {
-    if let Some(path) = std::env::var_os("MDQ_PERF_LOG") {
+    if let Some(path) = std::env::var_os("MJP_PERF_LOG") {
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(file, "{label},{epoch_us},{}", std::process::id());
         }

@@ -1,7 +1,7 @@
 [package]
-name = "mdq"
+name = "mjp"
 version = "0.1.0"
-description = "Markdown Quick Look"
+description = "Markdown. Just Preview."
 edition = "2021"
 rust-version = "1.90"
 
@@ -9,7 +9,7 @@ rust-version = "1.90"
 perf = []
 
 [lib]
-name = "mdq_lib"
+name = "mjp_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

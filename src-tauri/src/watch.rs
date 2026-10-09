@@ -20,7 +20,7 @@ pub fn start(app: AppHandle, path: PathBuf) -> Result<(), Box<dyn Error>> {
     watcher.watch(parent, RecursiveMode::NonRecursive)?;
 
     thread::Builder::new()
-        .name("mdq-file-watch".into())
+        .name("mjp-file-watch".into())
         .spawn(move || {
             let _watcher = watcher;
             while let Ok(event) = rx.recv() {
