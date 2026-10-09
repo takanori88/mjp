@@ -81,6 +81,7 @@ terminal: mjp README.md
 - On initial load, the WebView subscribes to change events before fetching the text. If an event overlaps a read, reread once to avoid missing a save. Events request a reread rather than carrying the entire document.
 - `Esc` and other shortcuts use small frontend handlers to request exit. The native window close path must also terminate the process; check for orphaned processes on macOS.
 - Use one window about 800 px wide, with a CSS limit on content width. Adapt to narrower screens. Begin with the standard title bar; do not build a custom one before measuring startup and interaction.
+- Plain and modifier clicks keep opening supported links in the default application. Auxiliary link clicks and drops have no preview action. DOM drop handlers cover the entire window, including margins. Keep Tauri's native drag-drop handling enabled as before; this setting controls native event handling rather than declaring whether the application accepts drops.
 
 ## 4. File watching
 

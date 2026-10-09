@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import DOMPurify from "dompurify";
 import { highlightCode, highlighter } from "./highlight";
+import { installInputGuards } from "./input";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import "./style.css";
@@ -15,6 +16,7 @@ type Snapshot = {
 
 const article = document.querySelector<HTMLElement>("#document")!;
 const status = document.querySelector<HTMLElement>("#status")!;
+installInputGuards(article, window);
 
 const markdown = new MarkdownIt({ html: false, breaks: false }).use(taskLists);
 markdown.renderer.rules.image = (tokens, index) =>
