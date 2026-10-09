@@ -1,137 +1,144 @@
-# mdq Phase 1 調査・設計計画
+# mjp Phase 1 research and design plan
 
-調査日: 2026-10-06  
-対象: macOS Apple Silicon。実装はこの計画の後に開始する。
+[日本語](docs/ja/PLAN.md)
 
-## 1. 要件と完了条件
+Researched: 2026-10-06
 
-`mdq <file>` でMarkdownを一つだけ開き、CLIはすぐシェルへ戻り、GUIは`Esc`で即座に終了する。Phase 1はエディタやファイル管理機能を持たない。
+Initial target: macOS Apple Silicon. Implementation began after this plan.
 
-| 領域 | Phase 1 の要件・判定 |
+On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Preview.) because an existing Homebrew formula already used the `mdq` command. The CLI, packages, and app identifier were renamed together; the Git repository name and history were kept. The design and measurement assumptions below were not changed by the rename. This document also records subsequent implementation decisions where noted.
+
+## 1. Requirements and completion criteria
+
+`mjp <file>` opens one Markdown file, returns the shell prompt without waiting for the GUI, and closes immediately on `Esc`. Phase 1 has no editor or file management features.
+
+| Area | Phase 1 requirement |
 | --- | --- |
-| CLI | 相対・絶対パスを受け付け、正常時はGUIを表示したままプロンプトを戻す。引数不足・複数指定・存在しないファイル・ディレクトリ・読めないファイルはGUI起動前に標準エラーへ理由を出し、非0で終了する。Markdown以外の拡張子もテキストとして試みる（拡張子で拒否しない）。UTF-8で読めない場合は明確にエラーにする。 |
-| 表示 | CommonMarkとGFMの見出し、段落、強調、取り消し線、リンク、引用、リスト、タスクリスト、表、インラインコード、コードブロック、水平線を表示する。長文と横長の表・コードをスクロールできる。 |
-| コード | 主要言語のfenced codeを色分けする。未知の言語はエスケープ済みプレーンテキストとして表示する。 |
-| 見た目 | OSのLight/Darkに自動追従し、本文幅、行間、見出し階層、コード・表の可読性を優先する。ツールバー、サイドバー、タブ、設定UIは作らない。 |
-| 更新 | 対象ファイルの保存を検出し、自動再描画する。削除・読み取り失敗時はウィンドウ内に小さなエラーを表示し、復旧後に再表示する。可能ならスクロール位置を維持する。 |
-| 終了 | `Esc`、macOSの`Cmd+W`、通常の閉じる操作でウィンドウとプロセスを終了する。将来のWindows/Linuxでは`Ctrl+W`も扱う。 |
-| 性能 | 起動時間を実測して記録する。正式な閾値は実機の初回測定後に設定し、改善の優先順位を機能追加より高くする。 |
+| CLI | Accept relative and absolute paths, then return the prompt while the GUI remains open. For missing or multiple arguments, a nonexistent or unreadable file, or a directory, print a clear reason to standard error and exit nonzero before opening a window. Attempt to read non-Markdown extensions as text. Report invalid UTF-8 clearly. |
+| Display | Render CommonMark and GFM headings, paragraphs, emphasis, strikethrough, links, quotes, lists, task lists, tables, inline code, fenced code, and horizontal rules. Allow scrolling through long documents and wide tables or code. |
+| Code | Highlight fenced code in common languages. Render unknown languages as escaped plain text. |
+| Appearance | Follow the OS light/dark setting. Prioritize readable content width, line spacing, heading hierarchy, code, and tables. Do not add a toolbar, sidebar, tabs, or settings UI. |
+| Reload | Detect saves and redraw automatically. Show a small in-window error if the file is deleted or cannot be read, then recover when it returns. Preserve scroll position if practical. |
+| Close | Exit the window and process on `Esc`, macOS `Cmd+W`, or the normal window close action. Consider `Ctrl+W` when Windows/Linux support is implemented. |
+| Performance | Measure startup time. Set a formal threshold after initial measurements on the target machine, and prioritize performance improvements over added features. |
 
-Phase 1で扱わない機能は[PROJECT.md](PROJECT.md)の第6・7・12・14節に従う。特にMermaid、KaTeX、stdin、複数ファイル、配布自動化は後続段階とする。画像は明示された最低限の表示項目に含まれないため、Phase 1では相対・外部画像の読み込みを有効にせず、画像記法を代替テキストへ変換して表示する。画像表示の要否は実機での読書体験を見て次段階で判断する。
+The exclusions in [PROJECT.md](PROJECT.md), sections 6, 7, 12, and 14, still apply. Mermaid, KaTeX, stdin, multiple files, and automated distribution are later-stage work. Images were not part of the minimum display requirements: Phase 1 replaces image syntax with alt text and does not load relative or external images. Reassess image support after using the app on a real machine.
 
-後続のUX判断として、最小限のVim風キー操作はQuick Lookの閲覧と終了をマウスなしで完結させるために採用し、編集やモード管理には広げない。
+A later UX decision added a small set of Vim-style keys so reading and closing can stay keyboard-only. It does not introduce editing modes or mode management.
 
-## 2. 公式仕様の確認と技術選択
+## 2. Official specifications and technology choices
 
 ### Tauri 2
 
-- Tauri 2はRustのアプリ本体とOSのWebViewを組み合わせる。macOSの`.app`には実行ファイルが`Contents/MacOS`に入るため、将来はその実行ファイルへ`mdq`コマンドを導く配布を検討できる。開発中は生成された実行ファイルを直接呼んでCLI動作を検証する。出典: [Tauri Architecture](https://v2.tauri.app/concept/architecture/)、[macOS Application Bundle](https://v2.tauri.app/distribute/macos-application-bundle/)。
-- Tauri 2のCLIプラグインは位置引数を扱える。ただし単一のパスだけならRustの`std::env::args_os`で十分で、追加プラグインとJS側の引数取得を省ける。非UTF-8のOSパスも`OsString`として受け取り、ファイル読込時に処理する。`--help`と`--version`の必要性は最小CLIとして実装時に決める。出典: [CLI plugin](https://v2.tauri.app/plugin/cli/)。
-- 設定上のウィンドウは`create: false`にでき、検証後だけRust側で作成できる。これによりエラー時に空のウィンドウを出さずに済む。出典: [Tauri Configuration](https://v2.tauri.app/reference/config/)。
-- Rustからフロントエンドへの変更通知はイベント、フロントエンドからの本文取得は限定したコマンドで行う。読み込みの主体をRustにまとめる。出典: [Calling Rust from the Frontend](https://v2.tauri.app/develop/calling-rust/)。
-- WebViewの権限はcapabilitiesで絞り、CSPは設定しない限り有効にならない。ファイルシステム・shell等の汎用プラグインをフロントエンドに与えない。出典: [Capabilities](https://v2.tauri.app/security/capabilities/)、[CSP](https://v2.tauri.app/security/csp/)。
+- Tauri 2 combines a Rust application with the OS WebView. A macOS `.app` stores its executable under `Contents/MacOS`, so a future installer could expose that executable as the `mjp` command. During development, test the generated executable directly. Sources: [Tauri architecture](https://v2.tauri.app/concept/architecture/), [macOS application bundle](https://v2.tauri.app/distribute/macos-application-bundle/).
+- The Tauri CLI plugin accepts positional arguments, but a single path can be handled by Rust `std::env::args_os` without another plugin or JS argument handling. `OsString` also preserves OS paths that are not UTF-8. Decide whether `--help` and `--version` belong in this minimal CLI during implementation. Source: [CLI plugin](https://v2.tauri.app/plugin/cli/).
+- The configured window can use `create: false` and be created from Rust only after validating the file. This prevents an empty window on a CLI error. Source: [Tauri configuration](https://v2.tauri.app/reference/config/).
+- Use events to notify the frontend of changes and a narrow command to fetch document content. Keep file reading in Rust. Source: [calling Rust from the frontend](https://v2.tauri.app/develop/calling-rust/).
+- Restrict WebView permissions through capabilities. CSP is not active unless configured. Do not give the frontend general filesystem or shell plugin access. Sources: [capabilities](https://v2.tauri.app/security/capabilities/), [CSP](https://v2.tauri.app/security/csp/).
 
-### Markdownレンダラ候補
+### Markdown renderer candidates
 
-| 候補 | 利点 | 懸念 | 判断 |
+| Candidate | Benefit | Concern | Initial decision |
 | --- | --- | --- | --- |
-| [Marked](https://github.com/markedjs/marked) | GFMが標準で有効。タスクリスト・表を含め、単一のレンダラで実装しやすい。 | 出力HTMLを無害化しないため、別のサニタイザが必須。 | **採用候補**。GFMの網羅と単純さを優先。 |
-| [markdown-it](https://github.com/markdown-it/markdown-it) | CommonMark準拠で高速。HTMLは無効化でき、表・取り消し線も扱える。 | GFMタスクリスト等には追加プラグインが必要。 | Markedで性能・互換性に問題が出た場合の代替。 |
-| [remark-parse + remark-gfm](https://github.com/remarkjs/remark-gfm) | GFMを明示的に組み込め、AST拡張に強い。 | HTML化まで複数パッケージと処理段階が必要。 | 今回の単純なviewerには過剰。 |
+| [Marked](https://github.com/markedjs/marked) | GFM is enabled by default; task lists and tables are easy to cover with one renderer. | Its HTML output is not sanitized, so a separate sanitizer is required. | Initial candidate for broad GFM coverage and simplicity. |
+| [markdown-it](https://github.com/markdown-it/markdown-it) | Fast, CommonMark-compliant, can disable HTML, and handles tables and strikethrough. | GFM task lists need another plugin. | Initial fallback if Marked had performance or compatibility problems. |
+| [remark-parse + remark-gfm](https://github.com/remarkjs/remark-gfm) | Explicit GFM support and strong AST extensibility. | Requires several packages and processing stages to produce HTML. | More machinery than this viewer needs. |
 
-MarkedのGFM既定値とサニタイズに関する仕様: [Marked Options](https://marked.js.org/using_advanced)、[Marked README](https://github.com/markedjs/marked)。
+Marked was the first candidate used in implementation. Large-document parsing proved too slow, so the current app uses `markdown-it` with a task-list plugin. The measurements and reason for this change are in [PERFORMANCE.md](PERFORMANCE.md). The original Marked assessment used [Marked options](https://marked.js.org/using_advanced) and its [README](https://github.com/markedjs/marked).
 
-### シンタックスハイライト候補
+### Syntax highlighter candidates
 
-| 候補 | 利点 | 懸念 | 判断 |
+| Candidate | Benefit | Concern | Initial decision |
 | --- | --- | --- | --- |
-| [highlight.js](https://github.com/highlightjs/highlight.js) | coreと必要言語だけを読み込める。同期的に処理できる。 | すべての言語を登録するとバンドルが増える。 | **採用候補**。最初はJS/TS、JSON、Python、Rust、Shell、HTML/CSSなどに限定し、実測で調整。 |
-| [Shiki](https://shiki.style/guide/install) | VS Code系の文法・テーマに近い。 | テーマ・言語・WASMの読み込みが初回表示に影響しうる。 | Phase 1では採用せず、品質差が大きい場合に再評価。 |
-| [Prism](https://github.com/PrismJS/prism) | 軽量な基本構成を組める。 | 言語管理と見た目の調整が別途必要。 | highlight.jsとの実測比較が必要な場合のみ検討。 |
+| [highlight.js](https://github.com/highlightjs/highlight.js) | Its core and only needed languages can be imported; processing is synchronous. | Registering every language increases bundle size. | Preferred. Start with JS/TS, JSON, Python, Rust, Shell, HTML/CSS, then measure. |
+| [Shiki](https://shiki.style/guide/install) | Grammar and theme quality close to VS Code. | Theme, language, and WASM loading may slow first display. | Defer until a substantial quality difference justifies it. |
+| [Prism](https://github.com/PrismJS/prism) | Can be configured lightly. | Requires separate language and style management. | Compare only if highlight.js needs replacing. |
 
-言語はコードフェンスで指定されたものだけをハイライトし、自動言語判定は使わない。未知の言語は安全にエスケープして表示する。Light/Dark用のハイライト色はアプリに同梱する。CDNには依存しない。
+Highlight only languages explicitly named on code fences; do not auto-detect. Render unknown languages as safely escaped text. Bundle light and dark highlight colors locally, without a CDN.
 
-### 代替構成との比較
+### Alternative architecture
 
-macOS専用のSwiftUI + WKWebViewならネイティブ側をさらに絞れる可能性はあるが、Windows/Linuxを視野に入れた設計をやり直すことになる。Tauri 2 + Vanilla TypeScript + Viteを第一案とする。Reactは画面状態が本文・エラー・テーマ程度しかないため採用しない。Viteはビルド時だけ使い、実行時にNode.jsや開発サーバーを必要としない。TauriとWebViewの起動コストが支配的なら、フレームワークを変える前に実測して確認する。
+SwiftUI plus WKWebView might yield an even smaller macOS-only design, but would require revisiting the Windows/Linux plan. The first choice is Tauri 2, Vanilla TypeScript, and Vite. React adds little for a view with only document, error, and theme state. Vite is needed for builds, not at runtime; installed users should not need Node.js or a development server. If Tauri/WebView startup dominates, measure it before changing frontend frameworks.
 
-## 3. 最小アーキテクチャ
+## 3. Minimal architecture
 
 ```text
-terminal: mdq README.md
-  └─ Rust CLI: 引数検査 → 絶対パス化 → UTF-8読込確認 → GUIを起動して終了
-       ├─ GUIプロセス: 成功時のみTauriの単一ウィンドウを作成
-       ├─ 親ディレクトリを監視
-       └─ 読込コマンド + 変更イベント
-            └─ Vanilla TypeScript: Marked → HTML無害化 → 本文DOMへ反映
-                 ├─ highlight.js (必要言語のみ)
-                 └─ CSS: OSテーマに追従
+terminal: mjp README.md
+  └─ Rust CLI: validate arguments → resolve path → validate UTF-8 → spawn GUI → return
+       ├─ GUI process: create one Tauri window only after validation
+       ├─ watch the parent directory
+       └─ read command + change event
+            └─ Vanilla TypeScript: Markdown parser → sanitize HTML → update DOM
+                 ├─ highlight.js (selected languages)
+                 └─ CSS: follow OS appearance
 ```
 
-- macOSのリリース版では、CLIが検証済みの絶対パスで同じ実行ファイルをGUI子プロセスとして起動し、端末から切り離して終了する。GUIはウィンドウを閉じるまで動く。`tauri dev`では開発サーバーを保つため前景のまま動かす。常駐デーモン、localhostサーバー、sidecar、single-instanceプラグインは置かない。同時に2回実行した場合は独立した2つのプレビューとする。Windows/Linuxの起動方法は移植時にOS別に実装・検証する。
-- 初期表示では、WebViewが変更イベントの受信準備をした後に本文を取得する。イベントと読込が重なった場合は後続の再読込を一度行い、保存内容の取りこぼしを防ぐ。ファイル全文をイベントに載せず、再読込要求だけを送る。
-- `Esc`とショートカットは最小のフロントエンド処理で終了要求を出す。ネイティブの閉じる操作も同じ終了経路に集め、macOSでウィンドウだけが閉じてプロセスが残らないことを確認する。
-- ウィンドウは幅約800pxの単一画面とし、本文の最大幅をCSSで制限する。狭い画面では画面幅に追従する。装飾は標準タイトルバーを基点とし、起動と操作の実測前に独自タイトルバーを作らない。
+- On macOS release builds, the CLI starts the same executable as a detached GUI child using the validated absolute path, then exits. The GUI remains until its window is closed. `tauri dev` stays in the foreground to keep the development server running. There is no daemon, localhost server, sidecar, or single-instance plugin. Two invocations create independent previews. Design and test Windows/Linux startup separately during porting.
+- On initial load, the WebView subscribes to change events before fetching the text. If an event overlaps a read, reread once to avoid missing a save. Events request a reread rather than carrying the entire document.
+- `Esc` and other shortcuts use small frontend handlers to request exit. The native window close path must also terminate the process; check for orphaned processes on macOS.
+- Use one window about 800 px wide, with a CSS limit on content width. Adapt to narrower screens. Begin with the standard title bar; do not build a custom one before measuring startup and interaction.
 
 ## 4. File watching
 
-方式はRustの[notify](https://docs.rs/notify/latest/notify/) `recommended_watcher`を第一案とする。監視対象はファイルそのものではなく親ディレクトリを非再帰で監視し、対象ファイル名に関係するイベントだけを扱う。編集ソフトによって上書き・削除後の再作成・一時ファイルからの置換が異なるため、イベント種別を厳密に解釈せず、短いdebounce（初期値100〜200ms）後に対象パスを読み直す。重複イベントはまとめる。
+The first choice is Rust [notify](https://docs.rs/notify/latest/notify/) with `recommended_watcher`. Watch the parent directory nonrecursively, not the file itself, and handle events involving the target filename. Editors differ in whether they overwrite, delete and recreate, or replace from a temporary file. Instead of interpreting each event type strictly, reread the target after a short debounce (initially 100–200 ms) and coalesce duplicates.
 
-一時的な読み取り失敗は短く再試行し、なお失敗した場合は最後の正常表示を残してエラーを示す。ファイルが復旧したら自動で消す。再描画前後のスクロール位置は絶対値をまず維持し、長さが大きく変わったときは新しい最大値に収める。監視資源は終了時に解放する。`notify`の公式資料はネットワークファイルシステムでイベントが届かない可能性を記載しているため、初回リリースの動作保証はローカルファイルとし、必要なら後続でpollingを検討する。
+Retry briefly after a transient read failure. If it persists, retain the last valid content and display an error; clear the error when the file recovers. First preserve the absolute scroll offset, clamping it to the new maximum if the document shrinks. Release watch resources on exit. The `notify` documentation notes that events may fail on network filesystems, so the first release only guarantees local files; consider polling later if needed.
 
-Tauriの[fs plugin](https://v2.tauri.app/plugin/file-system/)にもwatch APIはあるが、今回それを使うとフロントエンドにファイルアクセス範囲・権限を追加する必要がある。Rust内で読込と監視を完結させる方が境界を小さく保てる。
+Tauri's [filesystem plugin](https://v2.tauri.app/plugin/file-system/) also has a watch API, but using it would require frontend file-access scope and permissions. Keeping reads and watching in Rust preserves a smaller security boundary.
 
-## 5. セキュリティとリンク方針
+## 5. Security and link policy
 
-1. 入力Markdownは信頼しない。Markedが生成したHTMLを[DOMPurify](https://github.com/cure53/DOMPurify)でHTMLプロファイルと必要最小限のタグ・属性に絞って無害化してからDOMへ入れる。`script`、イベント属性、フォーム、iframe、SVG/MathML、危険なURLを許可しない。raw HTMLはPhase 1の機能として保証せず、安全なタグ以外は表示しない。
-2. HTMLの無害化に加えて、CSPでアプリ同梱のスクリプト・スタイルとTauri IPCだけを許し、リモートスクリプト・フレーム・オブジェクト・フォーム送信を拒否する。`img-src`は初期段階でリモート・任意ローカルを許可しない。CSPの正確な値はTauriが挿入するハッシュ/nonceとIPCソースを踏まえて実装時に検証する。
-3. リンククリックはアプリ内WebViewを移動させない。`https:`、`http:`、`mailto:`だけを明示的に検査し、OS既定のアプリへ渡す。`javascript:`、`data:`、`file:`、相対リンクはPhase 1では開かない。Tauriの[opener](https://v2.tauri.app/plugin/opener/)を使う場合も、フロントエンドへ無制限のopen権限を与えず、Rust側の限定コマンドでURLを再検査する。WebViewの通常ナビゲーション・新規ウィンドウ要求もアプリ内URL以外は拒否する。
-4. 汎用fs/shell/HTTP権限、外部CDN、ファイルをWebViewへ直接公開する広いasset protocol scopeは使わない。入力ファイルは10 MiBを上限とし、超えた場合は起動時はCLIエラー、Live Reload時は前回の内容を残してエラー表示する。FIFOなど通常ファイル以外は読み込まない（ブロックを避けるためUnixでは`O_NONBLOCK`で開き、開いたハンドルで種別を検査する）。Markdown中のリンクと画像から任意ファイルを読めないことを確認する。
+1. Treat input Markdown as untrusted. Sanitize the renderer's output with [DOMPurify](https://github.com/cure53/DOMPurify), limiting HTML to needed tags and attributes before inserting it into the DOM. Exclude scripts, event attributes, forms, iframes, SVG/MathML, and dangerous URLs. Raw HTML is not a Phase 1 feature. The implementation now uses `markdown-it` with raw HTML disabled.
+2. Add a CSP that allows bundled scripts and styles plus Tauri IPC while blocking remote scripts, frames, objects, and form submissions. Initially, `img-src` should allow neither remote nor arbitrary local images. Check exact hashes, nonces, and IPC sources produced by Tauri when implementing the policy.
+3. Never navigate the app WebView when a document link is clicked. Validate only `https:`, `http:`, and `mailto:`, then pass them to the OS default app. Do not open `javascript:`, `data:`, `file:`, or relative links in Phase 1. If using Tauri's [opener plugin](https://v2.tauri.app/plugin/opener/), recheck URLs in a narrow Rust command rather than granting unrestricted frontend access. Deny other normal navigation and new-window requests.
+4. Do not add general filesystem, shell, or HTTP permissions, an external CDN, or a broad asset protocol exposing files to the WebView. Limit inputs to 10 MiB; reject larger files before opening a window and retain the last content with an error during reload. Reject nonregular files such as FIFOs. On Unix, open with `O_NONBLOCK` and inspect the opened handle to avoid blocking. Verify that links and images in Markdown cannot read arbitrary local files.
 
-## 6. 提案ディレクトリ構成
+## 6. Proposed directory layout
+
+This was the initial layout proposal; the current file split differs where implementation needs changed.
 
 ```text
-mdq/
+<repository>/
 ├── PROJECT.md
 ├── PLAN.md
 ├── package.json
 ├── index.html
 ├── vite.config.ts
 ├── src/
-│   ├── main.ts          # 読込・更新・終了イベント
-│   ├── render.ts        # Marked / DOMPurify / highlight.js
-│   └── style.css        # 本文、Light/Dark、スクロール
+│   ├── main.ts          # load, reload, and close events
+│   ├── render.ts        # renderer, DOMPurify, highlight.js
+│   └── style.css        # content, light/dark, scrolling
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
 │   ├── capabilities/default.json
 │   └── src/
-│       ├── main.rs       # CLIの入口
-│       └── lib.rs        # Tauri起動・読込・監視・リンク
-└── tests/               # 必要なCLI・安全性フィクスチャ
+│       ├── main.rs       # CLI entry point
+│       └── lib.rs        # Tauri startup, reads, watching, links
+└── tests/               # CLI and security fixtures if needed
 ```
 
-ファイル分割は実装量に応じて増やす。UIフレームワーク、状態管理ライブラリ、ルーターは導入しない。
+Split files according to actual complexity. Avoid a UI framework, state-management library, and router.
 
-## 7. Phase 1 実装順と確認方法
+## 7. Phase 1 implementation order and verification
 
-1. **起動の縦断経路**: Tauri 2 + Vanilla TypeScriptを最小構成で起こし、`mdq <file>`のRust引数検査から単一ウィンドウにプレーンテキストを表示し、CLIを終了させる。絶対・相対パス、空・複数引数、存在しない/読めないファイル、終了コードを確認する。生成バイナリと`.app`内実行ファイルの両方で動作を試す。
-2. **レンダリング**: Marked、DOMPurify、必要言語だけのhighlight.jsを入れる。PROJECT.mdにある記法を一枚に集めた確認用Markdownで表示を確認する。未知のコード言語・長文・表・コードの横スクロールを確認する。
-3. **見た目と操作**: Light/Dark、自動切替、標準タイトルバー、スクロール、`Esc`/`Cmd+W`/Closeによるプロセス終了を実機で確認する。
-4. **Live Reload**: 親ディレクトリ監視とdebounceを加え、通常保存・atomic save・削除と再作成・連続保存を試す。スクロール位置の維持を可能な範囲で入れる。
-5. **安全性と性能の仕上げ**: `<script>`、イベント属性、`javascript:`リンク、危険な画像URLなどを含む入力を試し、コードが実行されずWebViewが外部へ移動しないことを確認する。クリーン起動と連続起動の「コマンド開始→本文表示」、メモリ使用量、JSバンドルサイズを同一実機で複数回測る。数値を記録し、遅い箇所だけを改善する。
+1. **End-to-end startup:** Create the minimal Tauri 2 + Vanilla TypeScript path from Rust argument validation through a single window displaying plain text, then let the CLI exit. Check absolute and relative paths, zero or multiple arguments, missing or unreadable files, and exit codes. Try both the generated binary and the executable inside the `.app`.
+2. **Rendering:** Add a Markdown parser, DOMPurify, and only needed highlight.js languages. Use one fixture with the syntax listed in PROJECT.md. Check unknown languages, long content, and horizontal scrolling of tables and code. The current parser is `markdown-it`.
+3. **Appearance and controls:** Check light/dark switching, the standard title bar, scrolling, and process exit after `Esc`, `Cmd+W`, and window close on the target Mac.
+4. **Live reload:** Add parent-directory watching and debounce; try ordinary save, atomic save, deletion and recreation, and rapid consecutive saves. Preserve scroll position if feasible.
+5. **Security and performance:** Try inputs with `<script>`, event attributes, `javascript:` links, and dangerous image URLs. Confirm there is no arbitrary script execution, external WebView navigation, or arbitrary local file read. On one machine, repeatedly measure clean and successive command-to-render times, memory use, and JS bundle size. Record the values and improve only the slow paths.
 
-### Phase 1 の完了判定
+### Phase 1 completion criteria
 
-- `mdq README.md`でシェルへすぐ戻り、数秒の閲覧に十分な表示・終了体験ができる。
-- 指定されたMarkdown/GFM記法と主要コード言語が読める。
-- 保存で自動更新され、削除・置換・復旧時もウィンドウが破綻しない。
-- CLIエラーはウィンドウを出さずに分かる文面と非0終了を返す。
-- 悪意あるMarkdownから任意JavaScript・外部ページ遷移・任意ローカルファイル読込が起きない。
-- 起動計測結果と未対応事項を記録し、次段階の判断材料にする。
+- `mjp README.md` returns the prompt quickly while the preview remains useful for a short reading session.
+- The requested Markdown/GFM syntax and common code languages are readable.
+- Saves reload automatically; deletion, replacement, and recovery do not break the window.
+- CLI errors are clear, nonzero, and do not open a window.
+- Malicious Markdown cannot execute arbitrary JavaScript, navigate to an external page in the WebView, or read arbitrary local files.
+- Startup measurements and remaining limitations are recorded for the next phase.
 
-## 8. 実装前に確認する小さな論点
+## 8. Open questions from the initial plan
 
-- `mdq`という名前の公開可否は、配布前にGitHub/Homebrew/crates.io/npm/PyPI/一般Web・商標で確認する。Phase 1のローカル開発は仮称のまま進める。
-- Windows/Linuxは設計対象だがPhase 1の検証対象はmacOS Apple Silicon。WindowsのGUI実行ファイルでは呼び出し元コンソールへのテキスト出力に制約があることが[Tauri CLI plugin](https://v2.tauri.app/plugin/cli/)に記されている。WindowsでのCLIエラー表示と`Ctrl+W`は移植時に実機確認する。また、Windowsの本番ビルドではアプリのURLが`http://tauri.localhost`になるため、現在`tauri:`スキームのみを許可している`on_navigation`が初期ページの読み込みを拒否しないか確認する。
-- ローカル画像・相対ファイルリンクは安全なファイル公開範囲の設計が必要なためPhase 1では開かない。閲覧上の必要性が高いと判明した場合、選択ファイル基準で対象を絞る方式を別途設計する。
+- Check `mjp` for naming conflicts across GitHub, Homebrew, crates.io, npm, PyPI, web search, and trademarks before distribution. The rename alone does not establish availability in any registry.
+- macOS Apple Silicon is the Phase 1 test target, though Windows/Linux influence the design. The [Tauri CLI plugin](https://v2.tauri.app/plugin/cli/) notes a Windows GUI executable limitation for console output; verify CLI errors and `Ctrl+W` on Windows during porting. Production Windows builds use `http://tauri.localhost`, so also check whether the current `on_navigation` policy, which only accepts `tauri:` in release builds, blocks the initial page.
+- Local images and relative file links require a carefully bounded file-exposure policy. If reading sessions show a strong need, design a scope based on the selected document in a later phase.

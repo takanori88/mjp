@@ -1,58 +1,64 @@
-# mdq Phase 2 性能計測
+# mjp Phase 2 performance measurements
 
-計測日: 2026-10-06（JST）  
-環境: macOS 26.6.2 / arm64、Tauri 2 の release ビルド  
-対象: `mdq <file>` の CLI 起動から Markdown 初回描画まで
+[日本語](docs/ja/PERFORMANCE.md)
 
-## 方法
+These figures were measured on 2026-10-06 under the former name `mdq`. The project was renamed to `mjp` on 2026-10-08; performance has not been remeasured since the rename. The original command name and environment variable below are retained as historical facts.
 
-- 小: 41 byte の Markdown（見出し、短文、task list）。大: 1,407,618 byte の技術文書風 Markdown（850 節、段落と Rust code block）。いずれも `/private/tmp` 上の UTF-8 ファイル。
-- `perf` Cargo feature と `VITE_MDQ_PERF=1` を同時に有効化した計測用ビルドで、CLI / GUI / WebView の時刻を記録した。通常の release ビルドではこれらの記録処理と IPC コマンドはコンパイルされず、生成 JS / 実行ファイルにも計測用識別子がないことを確認した。
-- 各ファイルを最初に1回、その後5回続けて起動した。各回、初回描画の記録後に計測用 GUI プロセスを終了した。macOS のファイルキャッシュは消去していないため、ここでの「cold」は計測列の初回起動であり、OS キャッシュ完全未使用を意味しない。
-- `CLI実測` は親プロセスの終了を外部から測った値。ほかは CLI の `main` 開始を 0ms とした時刻。`Window生成` は Tauri の `build()` 完了、`初回描画` は DOM 更新後の2回目の `requestAnimationFrame`。後者は画面への可視表示を厳密に証明する時刻ではなく、その近似値。
+Measured: 2026-10-06 (JST)
 
-## 結果
+Environment: macOS 26.6.2 / arm64, Tauri 2 release build
 
-| ファイル | 初回 CLI実測 | 初回 Window生成 | 初回 初回描画 | 連続起動 CLI実測 中央値（範囲） | 連続起動 初回描画 中央値（範囲） |
+Scope: from invoking `mdq <file>` to the first Markdown render
+
+## Method
+
+- The small input was 41 bytes of Markdown (a heading, short text, and a task list). The large input was 1,407,618 bytes of technical-document-style Markdown (850 sections, paragraphs, and Rust code blocks). Both were UTF-8 files under `/private/tmp`.
+- A measurement build enabled the Cargo `perf` feature and `VITE_MDQ_PERF=1` to record CLI, GUI, and WebView timestamps. At the time, the normal release build excluded those recording paths and IPC command from its compiled JS and executable.
+- Each file was opened once, then five more times in succession. After the first-render timestamp, the measurement GUI process was stopped. The macOS file cache was not cleared, so “cold” means the first launch in this sequence, not an uncached OS launch.
+- “Measured CLI” is the parent process's exit time measured externally. Other stages are relative to the start of CLI `main`. “Window created” marks completion of Tauri `build()`. “First render” is the second `requestAnimationFrame` after the DOM update: a proxy for visible display, not proof of the exact time the pixels appeared.
+
+## Results
+
+| Input | First CLI measured | First window created | First render | Subsequent CLI median (range) | Subsequent first-render median (range) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 小 41 B | 9.97 ms | 338.17 ms | 707.77 ms | 9.22 ms（9.01–11.99） | 650.61 ms（632.18–796.32） |
-| 大 1.41 MB | 12.39 ms | 318.57 ms | 1089.59 ms | 10.25 ms（9.52–10.54） | 1058.50 ms（1027.71–1121.57） |
+| Small, 41 B | 9.97 ms | 338.17 ms | 707.77 ms | 9.22 ms (9.01–11.99) | 650.61 ms (632.18–796.32) |
+| Large, 1.41 MB | 12.39 ms | 318.57 ms | 1089.59 ms | 10.25 ms (9.52–10.54) | 1058.50 ms (1027.71–1121.57) |
 
-連続起動5回の各段階の中央値（CLI `main` 開始からの経過時間）:
+Median stage times across the five subsequent launches, measured from the start of CLI `main`:
 
-| 段階 | 小 | 大 |
+| Stage | Small | Large |
 | --- | ---: | ---: |
-| CLI 内部で GUI spawn 後、復帰直前 | 1.45 ms | 1.73 ms |
-| GUI プロセス `main` 開始 | 6.65 ms | 6.67 ms |
-| Window生成 | 294.21 ms | 301.51 ms |
-| Markdown 受信 | 626.61 ms | 625.50 ms |
-| Markdown 変換 | 629.61 ms | 677.50 ms |
-| DOM 挿入 | 630.61 ms | 843.50 ms |
-| syntax highlighting 完了 | 631.61 ms | 876.50 ms |
-| 初回描画近似 | 650.61 ms | 1058.50 ms |
+| Just before CLI returns, after spawning the GUI | 1.45 ms | 1.73 ms |
+| GUI process enters `main` | 6.65 ms | 6.67 ms |
+| Window created | 294.21 ms | 301.51 ms |
+| Markdown received | 626.61 ms | 625.50 ms |
+| Markdown parsed | 629.61 ms | 677.50 ms |
+| DOM inserted | 630.61 ms | 843.50 ms |
+| Syntax highlighting complete | 631.61 ms | 876.50 ms |
+| First-render proxy | 650.61 ms | 1058.50 ms |
 
-小ファイルでは Window / WebView 起動から文書受信までが主な待ち時間。大ファイルでは、それに加えて DOM 挿入と描画に時間を使う。CLI の復帰は、両ファイルとも通常は約10ms。
+For the small file, most of the wait was between creating the window/WebView and receiving the document. The large file also spent time inserting and rendering the DOM. CLI return normally took about 10 ms for both inputs.
 
-計測用ビルドとは別に、通常 release ビルドでもシェルから計測した。ビルド直後の最初の1回は CLI 復帰に **451 ms**、別の再ビルド直後は **601 ms** かかった。最初のビルド後の連続5回は **8.8、8.9、10.1、9.4、9.7 ms** で、各回とも復帰1秒後に GUI プロセスが動作中だった。再ビルド後の初回が遅い理由は未特定で、配布後の初回起動時にも起きるかは確認が必要。
+The normal release build was also measured separately from the instrumentation build. The first launch immediately after a build took **451 ms** to return the CLI; after another rebuild, its first launch took **601 ms**. Five consecutive launches after the first build took **8.8, 8.9, 10.1, 9.4, and 9.7 ms**. In each case, the GUI process was still running one second after CLI return. The reason for the slow first launch after rebuilding remains unknown; it is not yet clear whether it occurs on a user's first launch after installation.
 
-## 実装中に見つかった問題
+## Issue found during implementation
 
-最初に使った Markdown パーサーでは、約1.4 MB の文書の変換が WebView 上で15秒を超えた。入力を 100 / 300 / 600 KB に分けると、変換完了はそれぞれ CLI 開始から 802 / 1,921 / 5,384 ms で、ファイルサイズに対して急に遅くなった。パーサーを `markdown-it` に替えた後、同じ約1.4 MB 文書の変換は文書受信から約52ms、初回描画は約1.06秒（連続起動中央値）になった。
+With the first Markdown parser, converting the approximately 1.4 MB document took more than 15 seconds in the WebView. When split into 100, 300, and 600 KB inputs, conversion completed 802, 1,921, and 5,384 ms after CLI start, respectively; the time grew sharply with input size. After switching to `markdown-it`, conversion of the same approximately 1.4 MB document took about 52 ms after receipt, and first render took about 1.06 seconds (median of subsequent launches).
 
-過密な別試料（1,147,519 byte、7,500個の fenced code block）も変更後に再計測した。Markdown変換は文書受信から110ms、初回描画は CLI 開始から1,606ms。以前の25秒超の停止は再現しなかった。
+A separate dense sample (1,147,519 bytes with 7,500 fenced code blocks) was also remeasured after the parser change. Markdown conversion took 110 ms after receipt and first render took 1,606 ms after CLI start. The previous pause of more than 25 seconds did not recur.
 
-## 再計測
+## Repeat the measurement
 
-計測用ビルド:
+Measurement build:
 
 ```sh
-VITE_MDQ_PERF=1 npm run tauri build -- --bundles app --features perf
+VITE_MJP_PERF=1 npm run tauri build -- --bundles app --features perf
 ```
 
-通常ビルド:
+Normal build:
 
 ```sh
 npm run tauri build -- --bundles app
 ```
 
-計測用ビルドだけ `MDQ_PERF_LOG=/path/to/log.csv mdq <file>` で段階時刻を CSV に書く。通常ビルドでは `MDQ_PERF_LOG` を設定しても記録しない。
+Only the current measurement build writes stage timestamps to CSV with `MJP_PERF_LOG=/path/to/log.csv mjp <file>`. Setting `MJP_PERF_LOG` on a normal build does not enable recording.
