@@ -34,6 +34,7 @@ Phase 1で扱わない機能は[PROJECT.md](PROJECT.md)の第6・7・12・14節�
 - Tauri 2のCLIプラグインは位置引数を扱える。ただし単一のパスだけならRustの`std::env::args_os`で十分で、追加プラグインとJS側の引数取得を省ける。非UTF-8のOSパスも`OsString`として受け取り、ファイル読込時に処理する。`--help`と`--version`の必要性は最小CLIとして実装時に決める。出典: [CLI plugin](https://v2.tauri.app/plugin/cli/)。
 - 設定上のウィンドウは`create: false`にでき、検証後だけRust側で作成できる。これによりエラー時に空のウィンドウを出さずに済む。出典: [Tauri Configuration](https://v2.tauri.app/reference/config/)。
 - Rustからフロントエンドへの変更通知はイベント、フロントエンドからの本文取得は限定したコマンドで行う。読み込みの主体をRustにまとめる。出典: [Calling Rust from the Frontend](https://v2.tauri.app/develop/calling-rust/)。
+- アプリのコマンドをビルド時のマニフェストに宣言し、mainウィンドウには使用する3コマンドを許可する。`perf`機能では計測コマンドと別サブディレクトリのcapabilityを追加で選択する。通常ビルドはそのcapabilityを除外し、以前の計測ビルドが生成した計測用permissionも削除する。同じチェックアウトでビルド方式を切り替えても設定が再現できるようにするためである。フロントエンドに公開するリンク処理は引き続きRustのopenerラッパーに限定する。
 - WebViewの権限はcapabilitiesで絞り、CSPは設定しない限り有効にならない。ファイルシステム・shell等の汎用プラグインをフロントエンドに与えない。出典: [Capabilities](https://v2.tauri.app/security/capabilities/)、[CSP](https://v2.tauri.app/security/csp/)。
 
 ### Markdownレンダラ候補
