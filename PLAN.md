@@ -56,6 +56,8 @@ Marked was the first candidate used in implementation. Large-document parsing pr
 
 Highlight only languages explicitly named on code fences; do not auto-detect. Render unknown languages as safely escaped text. Bundle light and dark highlight colors locally, without a CDN.
 
+Highlighted code uses a separate DOMPurify configuration that preserves text and spans with highlight classes, including nested scopes and embedded languages. Keeping this transformation in a small function with a replaceable highlighter lets tests check both normal formatting and the allowed output structure independently. DOM tests use jsdom only during development; the application continues to use the WebView DOM.
+
 ### Alternative architecture
 
 SwiftUI plus WKWebView might yield an even smaller macOS-only design, but would require revisiting the Windows/Linux plan. The first choice is Tauri 2, Vanilla TypeScript, and Vite. React adds little for a view with only document, error, and theme state. Vite is needed for builds, not at runtime; installed users should not need Node.js or a development server. If Tauri/WebView startup dominates, measure it before changing frontend frameworks.

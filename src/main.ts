@@ -1,17 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import DOMPurify from "dompurify";
-import hljs from "highlight.js/lib/core";
-import bash from "highlight.js/lib/languages/bash";
-import css from "highlight.js/lib/languages/css";
-import diff from "highlight.js/lib/languages/diff";
-import go from "highlight.js/lib/languages/go";
-import javascript from "highlight.js/lib/languages/javascript";
-import json from "highlight.js/lib/languages/json";
-import python from "highlight.js/lib/languages/python";
-import rust from "highlight.js/lib/languages/rust";
-import typescript from "highlight.js/lib/languages/typescript";
-import xml from "highlight.js/lib/languages/xml";
+import { highlightCode, highlighter } from "./highlight";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import "./style.css";
@@ -29,15 +19,6 @@ const status = document.querySelector<HTMLElement>("#status")!;
 const markdown = new MarkdownIt({ html: false, breaks: false }).use(taskLists);
 markdown.renderer.rules.image = (tokens, index) =>
   markdown.utils.escapeHtml(tokens[index].content);
-for (const [name, language] of Object.entries({
-  bash, css, diff, go, javascript, json, python, rust, typescript, xml,
-})) {
-  hljs.registerLanguage(name, language);
-}
-hljs.registerAliases(["sh", "shell", "zsh"], { languageName: "bash" });
-hljs.registerAliases(["js"], { languageName: "javascript" });
-hljs.registerAliases(["ts"], { languageName: "typescript" });
-hljs.registerAliases(["html", "svg"], { languageName: "xml" });
 
 let lastRevision = -1;
 let lastText: string | null = null;
@@ -87,12 +68,8 @@ function render(snapshot: Snapshot): void {
     const language = [...code.classList]
       .find((name) => name.startsWith("language-"))
       ?.slice("language-".length);
-    if (!language || !hljs.getLanguage(language)) continue;
-    code.innerHTML = hljs.highlight(code.textContent ?? "", {
-      language,
-      ignoreIllegals: true,
-    }).value;
-    code.classList.add("hljs");
+    if (!language || !highlighter.getLanguage(language)) continue;
+    highlightCode(code, language);
   }
   lastText = snapshot.text;
   perf("highlight_done");
