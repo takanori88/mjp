@@ -150,7 +150,11 @@ Tauriの[fs plugin](https://v2.tauri.app/plugin/file-system/)にもwatch APIは�
 - 悪意あるMarkdownから任意JavaScript・外部ページ遷移・任意ローカルファイル読込が起きない。
 - 起動計測結果と未対応事項を記録し、次段階の判断材料にする。
 
-## 8. 実装前に確認する小さな論点
+## 8. リリースビルドのパス
+
+`build:release` ではアプリケーションと依存ライブラリに Rust のソースパス置換を適用する。ホーム、Cargo、Rustup、チェックアウトの場所をビルド時に取得して一定の `/build/` 配下へ置き換え、共有する実行ファイルが開発者固有のディレクトリ構成に依存せず、ソースの位置を示せるようにする。Cargo のエンコード済みコンパイラフラグを使い、パス内の空白と環境変数で指定された既存のフラグを保持する。開発用コマンドでは通常のソースパスを維持する。
+
+## 9. 実装前に確認する小さな論点
 
 - `mjp` の配布名としての使用可否は、公開前に GitHub/Homebrew/crates.io/npm/PyPI/一般 Web・商標で確認する。名称変更だけで各レジストリの利用可能性を保証しない。
 - Windows/Linuxは設計対象だがPhase 1の検証対象はmacOS Apple Silicon。WindowsのGUI実行ファイルでは呼び出し元コンソールへのテキスト出力に制約があることが[Tauri CLI plugin](https://v2.tauri.app/plugin/cli/)に記されている。WindowsでのCLIエラー表示と`Ctrl+W`は移植時に実機確認する。また、Windowsの本番ビルドではアプリのURLが`http://tauri.localhost`になるため、現在`tauri:`スキームのみを許可している`on_navigation`が初期ページの読み込みを拒否しないか確認する。

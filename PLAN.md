@@ -148,7 +148,11 @@ Split files according to actual complexity. Avoid a UI framework, state-manageme
 - Malicious Markdown cannot execute arbitrary JavaScript, navigate to an external page in the WebView, or read arbitrary local files.
 - Startup measurements and remaining limitations are recorded for the next phase.
 
-## 8. Open questions from the initial plan
+## 8. Release build paths
+
+The `build:release` entry point applies Rust source-path remapping to the application and its dependencies. It derives the home, Cargo, Rustup, and checkout prefixes at build time and uses stable `/build/` destinations, keeping source locations useful without tying shared executables to one developer's directory layout. Cargo's encoded compiler flags preserve spaces in paths and existing environment-supplied flags. Development commands keep their normal source paths.
+
+## 9. Open questions from the initial plan
 
 - Check `mjp` for naming conflicts across GitHub, Homebrew, crates.io, npm, PyPI, web search, and trademarks before distribution. The rename alone does not establish availability in any registry.
 - macOS Apple Silicon is the Phase 1 test target, though Windows/Linux influence the design. The [Tauri CLI plugin](https://v2.tauri.app/plugin/cli/) notes a Windows GUI executable limitation for console output; verify CLI errors and `Ctrl+W` on Windows during porting. Production Windows builds use `http://tauri.localhost`, so also check whether the current `on_navigation` policy, which only accepts `tauri:` in release builds, blocks the initial page.

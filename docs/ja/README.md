@@ -47,11 +47,13 @@ mjp <file>
 
 ```sh
 npm ci
-npm run tauri build -- --bundles app
+npm run build:release -- --bundles app
 ./src-tauri/target/release/mjp README.md
 ```
 
 生成されるコマンドは `mjp` です。アプリバンドルは `src-tauri/target/release/bundle/macos/` に作られます。
+
+共有するバイナリは `build:release` で作成してください。依存ライブラリを含むコンパイル時に、ビルド環境のホーム、Cargo、Rustup、チェックアウトのパスを共通の `/build/` 配下のパスへ置き換えます。環境変数で指定された既存のコンパイラフラグは保持します。`cargo build` や `tauri build` を直接実行した場合、この置換は適用されません。生成された文字列やリンカーの出力には別のパスが含まれる可能性があるため、配布前には完成した実行ファイルを確認してください。
 
 ## 開発
 
@@ -62,7 +64,7 @@ npm ci
 npm test
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri build -- --bundles app
+npm run build:release -- --bundles app
 ```
 
 製品の目的は [PROJECT.md](PROJECT.md)、設計判断は [PLAN.md](PLAN.md)、測定結果は [PERFORMANCE.md](PERFORMANCE.md) を参照してください。

@@ -52,13 +52,13 @@
 計測用ビルド:
 
 ```sh
-VITE_MJP_PERF=1 npm run tauri build -- --bundles app --features perf
+VITE_MJP_PERF=1 npm run build:release -- --bundles app --features perf
 ```
 
 通常ビルド:
 
 ```sh
-npm run tauri build -- --bundles app
+npm run build:release -- --bundles app
 ```
 
 現在の計測用ビルドだけ `MJP_PERF_LOG=/path/to/log.csv mjp <file>` で段階時刻を CSV に書く。通常ビルドでは `MJP_PERF_LOG` を設定しても記録しない。

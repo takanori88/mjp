@@ -52,13 +52,13 @@ A separate dense sample (1,147,519 bytes with 7,500 fenced code blocks) was also
 Measurement build:
 
 ```sh
-VITE_MJP_PERF=1 npm run tauri build -- --bundles app --features perf
+VITE_MJP_PERF=1 npm run build:release -- --bundles app --features perf
 ```
 
 Normal build:
 
 ```sh
-npm run tauri build -- --bundles app
+npm run build:release -- --bundles app
 ```
 
 Only the current measurement build writes stage timestamps to CSV with `MJP_PERF_LOG=/path/to/log.csv mjp <file>`. Setting `MJP_PERF_LOG` on a normal build does not enable recording.

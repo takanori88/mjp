@@ -47,11 +47,13 @@ There is no published package or installer yet. From a checkout of this reposito
 
 ```sh
 npm ci
-npm run tauri build -- --bundles app
+npm run build:release -- --bundles app
 ./src-tauri/target/release/mjp README.md
 ```
 
 The built command is `mjp`. The app bundle is under `src-tauri/target/release/bundle/macos/`.
+
+Use `build:release` for binaries you intend to share. It remaps the build machine's home, Cargo, Rustup, and checkout paths to generic `/build/` paths during compilation, including dependencies. Existing environment-supplied compiler flags are preserved. Direct `cargo build` or `tauri build` commands do not apply this remapping. Check the final executable before distribution because generated strings and linker output may contain other paths.
 
 ## Development
 
@@ -62,7 +64,7 @@ npm ci
 npm test
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri build -- --bundles app
+npm run build:release -- --bundles app
 ```
 
 See [PROJECT.md](PROJECT.md) for the product goals, [PLAN.md](PLAN.md) for implementation decisions, and [PERFORMANCE.md](PERFORMANCE.md) for measurements.
