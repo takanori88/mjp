@@ -25,7 +25,7 @@ mjp README.md
 mjp <file>
 ```
 
-読み取り可能な通常の UTF-8 ファイルを1つ指定します。上限は 10 MiB です。相対パスと絶対パスに対応し、拡張子による制限はありません。エラーはウィンドウを開く前にターミナルへ出力します。現時点では CLI オプションはありません。
+読み取り可能な通常の UTF-8 ファイルを1つ指定します。上限は 10 MiB です。相対パスと絶対パスに対応し、拡張子による制限はありません。エラーはウィンドウを開く前にターミナルへ出力します。`mjp --help`（`-h`）で使い方、`mjp --version`（`-V`）でバージョンを表示します。名前がハイフンで始まるファイルには `mjp -- -notes.md` を使います。
 
 128 KiB以下のファイルはMarkdownとして整形します。これを超えるファイルは初回表示を速く保つため、案内とともに全文をプレーンテキストで表示します。どちらの表示でも自動更新できます。
 
@@ -43,15 +43,33 @@ mjp <file>
 
 ## インストール
 
-公開済みのパッケージやインストーラーはまだありません。このリポジトリを取得した状態から、macOS アプリをソースビルドできます。
+初回は macOS Apple Silicon 向けのソース公開です。公開済みのバイナリ、インストーラー、Homebrew パッケージはまだありません。
+
+[Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos)、Rust 1.90以降、Node.js 24.x（24.15.0以降）と npm を用意し、リポジトリのルートでビルドします。
 
 ```sh
+git clone https://github.com/takanori88/mjp.git
+cd mjp
 npm ci
-npm run build:release -- --bundles app
+npm run build:release -- --bundles app -- --locked
 ./src-tauri/target/release/mjp README.md
 ```
 
 生成されるコマンドは `mjp` です。アプリバンドルは `src-tauri/target/release/bundle/macos/` に作られます。
+
+ユーザーアカウント用の CLI としてインストールするには、次を実行します。
+
+```sh
+mkdir -p "$HOME/.local/bin"
+install -m 755 src-tauri/target/release/mjp "$HOME/.local/bin/mjp"
+export PATH="$HOME/.local/bin:$PATH"
+mjp --version
+mjp README.md
+```
+
+新しいターミナルでも使えるよう、`export PATH` の行を `~/.zshrc` などのシェル起動ファイルに追加してください。更新時は再ビルドして `install` を繰り返し、削除時は `~/.local/bin/mjp` を削除します。インストールしたコマンドの実行に Node.js や Rust は不要です。
+
+`.app` 内の `mjp.app/Contents/MacOS/mjp` も同じコマンドで、ターミナルからファイルを渡して使います。Finder で開いてファイルを選ぶ方式ではありません。ここで作成するビルドは Developer ID 署名・公証を行いません。バイナリ配布と、そのインストール体験の整備は後の段階です。
 
 共有するバイナリは `build:release` で作成してください。依存ライブラリを含むコンパイル時に、ビルド環境のホーム、Cargo、Rustup、チェックアウトのパスを共通の `/build/` 配下のパスへ置き換えます。環境変数で指定された既存のコンパイラフラグは保持します。`cargo build` や `tauri build` を直接実行した場合、この置換は適用されません。生成された文字列やリンカーの出力には別のパスが含まれる可能性があるため、配布前には完成した実行ファイルを確認してください。
 
@@ -63,10 +81,14 @@ CLI、ウィンドウ、ファイル監視には Tauri 2 と Rust を使用し�
 npm ci
 npm test
 npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run build:release -- --bundles app
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+npm run build:release -- --bundles app -- --locked
 ```
 
 製品の目的は [PROJECT.md](PROJECT.md)、設計判断は [PLAN.md](PLAN.md)、測定結果は [PERFORMANCE.md](PERFORMANCE.md) を参照してください。
 
 ルートの英語版が標準文書で、日本語版は `docs/ja/` に置いています。
+
+## ライセンス
+
+mjp は [MIT License](../../LICENSE) です。著作権表示は 2026 takanori88 としています。依存物には各プロジェクトのライセンスが適用されます。[第三者の依存物](THIRD_PARTY.md) と、ソース公開手順の [RELEASING.md](RELEASING.md) を参照してください。

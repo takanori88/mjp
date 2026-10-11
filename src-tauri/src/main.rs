@@ -1,3 +1,5 @@
+mod cli;
+
 #[cfg(target_os = "macos")]
 mod launch;
 
@@ -8,7 +10,22 @@ fn main() {
     } else {
         "cli_entry"
     });
-    let document = match mjp_lib::load_document(std::env::args_os().skip(1)) {
+    let input = match cli::parse(std::env::args_os().skip(1)) {
+        Ok(cli::Command::Help) => {
+            println!("{}", cli::HELP);
+            return;
+        }
+        Ok(cli::Command::Version) => {
+            println!("mjp {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Ok(cli::Command::Preview(path)) => path,
+        Err(message) => {
+            eprintln!("mjp: {message}");
+            std::process::exit(2);
+        }
+    };
+    let document = match mjp_lib::load_document([input]) {
         Ok(document) => document,
         Err(message) => {
             eprintln!("mjp: {message}");

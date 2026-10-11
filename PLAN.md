@@ -152,7 +152,13 @@ Split files according to actual complexity. Avoid a UI framework, state-manageme
 
 The `build:release` entry point applies Rust source-path remapping to the application and its dependencies. It derives the home, Cargo, Rustup, and checkout prefixes at build time and uses stable `/build/` destinations, keeping source locations useful without tying shared executables to one developer's directory layout. Cargo's encoded compiler flags preserve spaces in paths and existing environment-supplied flags. Development commands keep their normal source paths.
 
-## 9. Open questions from the initial plan
+## 9. Source distribution
+
+The first public distribution contains source only under the MIT License. Keep the current 0.1.0 version consistent across npm, Cargo, and Tauri; derive CLI `--version` output from Cargo's package version. Handle help and version before document loading, and use `--` to preserve access to file names that look like options. The user-local CLI installation copies the self-contained executable, avoiding a system-wide installer for this first step. The app declares macOS 11.0 as its deployment minimum for Apple Silicon; this is not a claim of testing on every older macOS release.
+
+Dependencies retain their original terms. Binary release notices, Developer ID signing, notarization, and automated publishing are deferred until binary distribution is planned. Source publication keeps the existing Git history; changing repository visibility remains a separate owner action.
+
+## 10. Open questions from the initial plan
 
 - Check `mjp` for naming conflicts across GitHub, Homebrew, crates.io, npm, PyPI, web search, and trademarks before distribution. The rename alone does not establish availability in any registry.
 - macOS Apple Silicon is the Phase 1 test target, though Windows/Linux influence the design. The [Tauri CLI plugin](https://v2.tauri.app/plugin/cli/) notes a Windows GUI executable limitation for console output; verify CLI errors and `Ctrl+W` on Windows during porting. Production Windows builds use `http://tauri.localhost`, so also check whether the current `on_navigation` policy, which only accepts `tauri:` in release builds, blocks the initial page.

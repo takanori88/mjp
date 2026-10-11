@@ -25,7 +25,7 @@ mjp README.md
 mjp <file>
 ```
 
-Pass exactly one path to a readable, regular UTF-8 file of at most 10 MiB. Relative and absolute paths work. The file extension is not restricted. Errors are printed in the terminal before a window opens. There are no CLI options yet.
+Pass exactly one path to a readable, regular UTF-8 file of at most 10 MiB. Relative and absolute paths work. The file extension is not restricted. Errors are printed in the terminal before a window opens. Use `mjp --help` (`-h`) for usage and `mjp --version` (`-V`) for the version. Use `mjp -- -notes.md` to open a file whose name starts with a dash.
 
 Files up to 128 KiB are formatted as Markdown. Larger files show their complete source as plain text, with a notice, to keep initial display quick. Live reload works in both modes.
 
@@ -43,15 +43,33 @@ Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app
 
 ## Installation
 
-There is no published package or installer yet. From a checkout of this repository, build the macOS app from source:
+The initial distribution is source-only, for macOS Apple Silicon. There is no published binary, installer, or Homebrew package yet.
+
+Install [Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos), Rust 1.90 or newer, and Node.js 24.x (24.15.0 or newer), with npm. Then build from the repository root:
 
 ```sh
+git clone https://github.com/takanori88/mjp.git
+cd mjp
 npm ci
-npm run build:release -- --bundles app
+npm run build:release -- --bundles app -- --locked
 ./src-tauri/target/release/mjp README.md
 ```
 
 The built command is `mjp`. The app bundle is under `src-tauri/target/release/bundle/macos/`.
+
+To install the CLI for your user account:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+install -m 755 src-tauri/target/release/mjp "$HOME/.local/bin/mjp"
+export PATH="$HOME/.local/bin:$PATH"
+mjp --version
+mjp README.md
+```
+
+Add the `export PATH` line to your shell startup file (for example, `~/.zshrc`) to keep it for new terminals. Rebuild and repeat `install` to update; remove `~/.local/bin/mjp` to uninstall. The installed command needs neither Node.js nor Rust at runtime.
+
+The `.app` contains the same command at `mjp.app/Contents/MacOS/mjp`; pass it a file from the terminal. Opening it in Finder is not a file-selection workflow. Builds made here are not Developer ID signed or notarized. Binary distribution and its installation experience are deferred.
 
 Use `build:release` for binaries you intend to share. It remaps the build machine's home, Cargo, Rustup, and checkout paths to generic `/build/` paths during compilation, including dependencies. Existing environment-supplied compiler flags are preserved. Direct `cargo build` or `tauri build` commands do not apply this remapping. Check the final executable before distribution because generated strings and linker output may contain other paths.
 
@@ -63,10 +81,14 @@ The app uses Tauri 2 and Rust for the CLI, window, and file watching, with Vanil
 npm ci
 npm test
 npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run build:release -- --bundles app
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+npm run build:release -- --bundles app -- --locked
 ```
 
 See [PROJECT.md](PROJECT.md) for the product goals, [PLAN.md](PLAN.md) for implementation decisions, and [PERFORMANCE.md](PERFORMANCE.md) for measurements.
 
 The root documents are maintained in English; Japanese versions are under [docs/ja/](docs/ja/README.md).
+
+## License
+
+mjp is licensed under the [MIT License](LICENSE), copyright 2026 takanori88. Dependencies retain their own licenses; see [third-party dependencies](THIRD_PARTY.md). See [RELEASING.md](RELEASING.md) for the source-publication procedure.
