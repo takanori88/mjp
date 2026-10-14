@@ -178,7 +178,13 @@ Tauriの[fs plugin](https://v2.tauri.app/plugin/file-system/)にもwatch APIは�
 
 依存物には元のライセンスが適用される。バイナリ配布用のライセンス同梱、Developer ID 署名、公証、自動公開は、バイナリ配布を計画する段階で整備する。ソース公開では既存の Git 履歴を保持し、リポジトリの公開設定変更は所有者による別の操作とする。
 
-## 10. 実装前に確認する小さな論点
+## 10. 依存関係の保守と CI
+
+Dependabot で Cargo、npm、GitHub Actions を毎週確認し、メジャー更新も対象として、CI 成功後に更新ごとに人間がレビューして手動マージする。依存物ごとの差分を確認しやすいよう、当初はグループ化せず、バージョン更新 PR はエコシステムごとに最大5件までとする。
+
+現在の対象に合わせ、macOS 15 Apple Silicon の CI ジョブを1つ設ける。OS の指定をジョブ単位に置き、Rust の作業ディレクトリを明記することで、今の Windows/Linux 対応を主張せずに後の OS 別ジョブでも検証を再利用しやすくする。リリース用スクリプトのテストが小さな Rust フィクスチャをコンパイルするため、npm テストより先に Rust を用意する。CI の Rust は意図的に更新するまで Clippy の診断を一定に保つため 1.99.0 に固定し、Node の対応範囲は重複記載せず `package.json` から読む。Tauri が利用するフロントエンド資産は Cargo の検証より先にビルドする。依存物のダウンロードをキャッシュし、古いアプリ成果物を残さないよう成果物は再構築する。GitHub 公式 Action を完全なコミット SHA で固定し、ワークフローは読み取り権限のみで動作させ、通常の PR と Dependabot PR がシークレットなしで同じ検証を使用する。運用手順と所有者側の設定は [RELEASING.md](RELEASING.md) を参照する。
+
+## 11. 実装前に確認する小さな論点
 
 - `mjp` の配布名としての使用可否は、公開前に GitHub/Homebrew/crates.io/npm/PyPI/一般 Web・商標で確認する。名称変更だけで各レジストリの利用可能性を保証しない。
 - Windows/Linuxは設計対象だがPhase 1の検証対象はmacOS Apple Silicon。WindowsのGUI実行ファイルでは呼び出し元コンソールへのテキスト出力に制約があることが[Tauri CLI plugin](https://v2.tauri.app/plugin/cli/)に記されている。WindowsでのCLIエラー表示と`Ctrl+W`は移植時に実機確認する。また、Windowsの本番ビルドではアプリのURLが`http://tauri.localhost`になるため、現在`tauri:`スキームのみを許可している`on_navigation`が初期ページの読み込みを拒否しないか確認する。

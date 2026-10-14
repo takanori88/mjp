@@ -176,7 +176,13 @@ The first public distribution contains source only under the MIT License. Keep t
 
 Dependencies retain their original terms. Binary release notices, Developer ID signing, notarization, and automated publishing are deferred until binary distribution is planned. Source publication keeps the existing Git history; changing repository visibility remains a separate owner action.
 
-## 10. Open questions from the initial plan
+## 10. Dependency maintenance and CI
+
+Check Cargo, npm, and GitHub Actions weekly with Dependabot, keeping major updates eligible and reviewing each update manually after CI succeeds. Start without grouping so each dependency change remains easy to assess; cap open version-update PRs at five per ecosystem.
+
+Use one macOS 15 Apple Silicon CI job for the current target. Keep the platform selection at the job level and Rust working directories explicit so later OS jobs can reuse the checks without claiming Windows/Linux support today. Set up Rust before npm tests because the release-tooling test compiles a small Rust fixture. Pin the CI Rust toolchain to 1.99.0 to keep Clippy diagnostics stable until deliberately upgraded, and read Node's supported range from `package.json` to avoid duplicating it. Build frontend assets before Cargo checks because Tauri consumes them. Keep dependency downloads cached and rebuild artifacts to avoid retaining stale application outputs. GitHub-provided actions use full commit SHAs and the workflow needs only read access, allowing ordinary and Dependabot PRs to use the same checks without secrets. See [RELEASING.md](RELEASING.md) for the maintenance procedure and owner-side settings.
+
+## 11. Open questions from the initial plan
 
 - Check `mjp` for naming conflicts across GitHub, Homebrew, crates.io, npm, PyPI, web search, and trademarks before distribution. The rename alone does not establish availability in any registry.
 - macOS Apple Silicon is the Phase 1 test target, though Windows/Linux influence the design. The [Tauri CLI plugin](https://v2.tauri.app/plugin/cli/) notes a Windows GUI executable limitation for console output; verify CLI errors and `Ctrl+W` on Windows during porting. Production Windows builds use `http://tauri.localhost`, so also check whether the current `on_navigation` policy, which only accepts `tauri:` in release builds, blocks the initial page.
