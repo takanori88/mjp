@@ -14,6 +14,8 @@ use super::Document;
 const SETTLE_TIME: Duration = Duration::from_millis(140);
 const MAX_SETTLE_TIME: Duration = Duration::from_millis(700);
 
+type Subscription = (notify::RecommendedWatcher, Receiver<notify::Result<Event>>);
+
 pub fn start(app: AppHandle, path: PathBuf) -> Result<(), Box<dyn Error>> {
     let (watcher, rx) = subscribe(&path)?;
     thread::Builder::new()
@@ -29,9 +31,7 @@ pub fn start(app: AppHandle, path: PathBuf) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn subscribe(
-    path: &Path,
-) -> Result<(notify::RecommendedWatcher, Receiver<notify::Result<Event>>), Box<dyn Error>> {
+fn subscribe(path: &Path) -> Result<Subscription, Box<dyn Error>> {
     let parent = path.parent().ok_or("file has no parent directory")?;
     let (tx, rx) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(tx)?;
