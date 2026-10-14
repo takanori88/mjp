@@ -8,6 +8,7 @@ await startPreview(
   document.querySelector<HTMLElement>("#status")!,
   {
     getDocument: () => invoke("get_document"),
+    getImage: reference => invoke<ArrayBuffer>("get_image", { reference }),
     subscribe: changed => listen("document-changed", () => { void changed(); }),
     close: () => invoke("close_preview"),
     openExternal: url => invoke("open_external", { url }),

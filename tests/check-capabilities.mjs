@@ -7,7 +7,7 @@ const manifests = read('acl-manifests');
 const capabilities = read('capabilities');
 const schema = read('desktop-schema');
 const permissions = manifests['__app-acl__'].permissions;
-for (const command of ['get-document', 'close-preview', 'open-external']) {
+for (const command of ['get-document', 'get-image', 'close-preview', 'open-external']) {
   assert.ok(permissions[`allow-${command}`]);
   assert.ok(capabilities['main-capability'].permissions.includes(`allow-${command}`));
 }

@@ -2,12 +2,18 @@ fn main() {
     #[cfg(feature = "perf")]
     const COMMANDS: &[&str] = &[
         "get_document",
+        "get_image",
         "close_preview",
         "open_external",
         "perf_mark",
     ];
     #[cfg(not(feature = "perf"))]
-    const COMMANDS: &[&str] = &["get_document", "close_preview", "open_external"];
+    const COMMANDS: &[&str] = &[
+        "get_document",
+        "get_image",
+        "close_preview",
+        "open_external",
+    ];
 
     // Generated permissions survive feature changes in the same checkout.
     #[cfg(not(feature = "perf"))]

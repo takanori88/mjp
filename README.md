@@ -10,10 +10,13 @@
 mjp README.md
 ```
 
+![mjp displaying a Markdown README in a dark macOS preview window](docs/images/mjp-preview.png)
+
 ## Features
 
 - Renders Markdown, including tables and task lists, in a single window.
 - Highlights fenced code blocks for common languages.
+- Displays local PNG, JPEG, GIF, and WebP images referenced in Markdown.
 - Follows the system light or dark appearance.
 - Reloads the preview when the file changes, preserving the scroll position when possible.
 - Supports keyboard navigation and quick closing.
@@ -29,7 +32,13 @@ Pass exactly one path to a readable, regular UTF-8 file of at most 10 MiB. Relat
 
 Files up to 128 KiB are formatted as Markdown. Larger files show their complete source as plain text, with a notice, to keep initial display quick. Live reload works in both modes.
 
-Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app. Relative links and images are not opened or loaded in the current preview.
+Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app. Relative file links are not opened. Raw HTML remains plain text.
+
+### Local images
+
+Use Markdown image syntax, for example `![Preview](images/preview.png)`. Paths are relative to the Markdown file. In a Git working tree, images may come from anywhere within the nearest repository root, including paths such as `../images/preview.png`. Otherwise, images must stay in the Markdown file's directory or its subdirectories. Symlinks, absolute paths, remote URLs, inline data URLs, and SVG are not loaded.
+
+Images fit the window while preserving their proportions. Unavailable images retain their alt text. Each image is limited to 10 MiB; a rendered document loads at most 64 image occurrences and 32 MiB of distinct image data. Image files are not watched separately: reopen the preview to pick up an image-only edit, or change and save the Markdown text.
 
 ### Yazi + Neovim + mjp
 

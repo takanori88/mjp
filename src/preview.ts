@@ -1,8 +1,10 @@
 import { installInputGuards } from "./input.ts";
 import { createDocumentRenderer, externalUrl, type Snapshot } from "./render.ts";
+import type { ReadImage } from "./images.ts";
 
 type PreviewBridge = {
   getDocument: () => Promise<Snapshot>;
+  getImage?: ReadImage;
   subscribe: (changed: () => Promise<void>) => Promise<unknown>;
   close: () => Promise<unknown>;
   openExternal: (url: string) => Promise<unknown>;
@@ -21,7 +23,7 @@ export async function startPreview(
   installInputGuards(article, window);
 
   const render = createDocumentRenderer(
-    article, status, bridge.mark,
+    article, status, bridge.mark, bridge.getImage,
   );
 
   let requestNumber = 0;

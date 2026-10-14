@@ -4,13 +4,14 @@ use std::{
     fmt, fs,
     io::{self, Read},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
+mod images;
 mod navigation;
 #[cfg(feature = "perf")]
 pub mod perf;
@@ -79,6 +80,7 @@ pub struct Snapshot {
 #[derive(Debug)]
 pub struct Document {
     path: PathBuf,
+    images: Option<Arc<images::ImageScope>>,
     snapshot: Mutex<Snapshot>,
 }
 
@@ -158,6 +160,7 @@ pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Documen
         .map_err(|error| format!("{label}: cannot resolve file path: {error}"))?;
 
     Ok(Document {
+        images: images::ImageScope::new(&path).ok().map(Arc::new),
         path,
         snapshot: Mutex::new(Snapshot {
             text,
@@ -171,6 +174,21 @@ pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Documen
 #[tauri::command]
 fn get_document(document: tauri::State<'_, Document>) -> Result<Snapshot, String> {
     document.snapshot()
+}
+
+#[tauri::command]
+async fn get_image(
+    document: tauri::State<'_, Document>,
+    reference: String,
+) -> Result<tauri::ipc::Response, String> {
+    let scope = document
+        .images
+        .clone()
+        .ok_or("Local images are unavailable")?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || scope.read(&reference))
+        .await
+        .map_err(|_| "Cannot read local image")??;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -224,6 +242,7 @@ pub fn run(document: Document) -> tauri::Result<()> {
     #[cfg(feature = "perf")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         get_document,
+        get_image,
         close_preview,
         open_external,
         perf_mark
@@ -231,6 +250,7 @@ pub fn run(document: Document) -> tauri::Result<()> {
     #[cfg(not(feature = "perf"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         get_document,
+        get_image,
         close_preview,
         open_external
     ]);
