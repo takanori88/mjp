@@ -1,6 +1,6 @@
 # mjp Phase 1 research and design plan
 
-[日本語](docs/ja/PLAN.md)
+[日本語](../ja/PLAN.md)
 
 Researched: 2026-10-06
 
@@ -81,6 +81,7 @@ terminal: mjp README.md
 
 - On macOS release builds, the CLI starts the same executable as a detached GUI child using the validated absolute path, then exits. The GUI remains until its window is closed. `tauri dev` stays in the foreground to keep the development server running. There is no daemon, localhost server, sidecar, or single-instance plugin. Two invocations create independent previews. Design and test Windows/Linux startup separately during porting.
 - On initial load, the WebView subscribes to change events before fetching the text. If an event overlaps a read, reread once to avoid missing a save. Events request a reread rather than carrying the entire document.
+- Keep Tauri command and event wiring in `main.ts`, and pass those operations to the preview controller. This lets DOM tests exercise the same loading, rendering, keyboard, and link handlers as the app without starting a native window. Only the latest requested read may update content or its error banner, including when earlier requests finish later.
 - `Esc` and other shortcuts use small frontend handlers to request exit. The native window close path must also terminate the process; check for orphaned processes on macOS.
 - Use one window about 800 px wide, with a CSS limit on content width. Adapt to narrower screens. Begin with the standard title bar; do not build a custom one before measuring startup and interaction.
 - Plain and modifier clicks keep opening supported links in the default application. Auxiliary link clicks and drops have no preview action. DOM drop handlers cover the entire window, including margins. Keep Tauri's native drag-drop handling enabled as before; this setting controls native event handling rather than declaring whether the application accepts drops.
@@ -104,14 +105,21 @@ Tauri's [filesystem plugin](https://v2.tauri.app/plugin/file-system/) also has a
 3. Never navigate the app WebView when a document link is clicked. Validate only `https:`, `http:`, and `mailto:`, then pass them to the OS default app. Do not open `javascript:`, `data:`, `file:`, or relative links in Phase 1. If using Tauri's [opener plugin](https://v2.tauri.app/plugin/opener/), recheck URLs in a narrow Rust command rather than granting unrestricted frontend access. Deny other normal navigation and new-window requests.
 4. Do not add general filesystem, shell, or HTTP permissions, an external CDN, or a broad asset protocol exposing files to the WebView. Limit inputs to 10 MiB; reject larger files before opening a window and retain the last content with an error during reload. Reject nonregular files such as FIFOs. On Unix, open with `O_NONBLOCK` and inspect the opened handle to avoid blocking. Verify that links and images in Markdown cannot read arbitrary local files.
 
-## 6. Proposed directory layout
+## 6. Directory layout
 
-This was the initial layout proposal; the current file split differs where implementation needs changed.
+The application layout below is a simplified overview; some components are split into additional files.
+
+Keep detailed English documents in `docs/en/` and their Japanese counterparts in `docs/ja/` so language versions are grouped consistently and the repository root stays concise. English remains canonical. Keep the English README at the root as the entry point, alongside `AGENTS.md`, `CLAUDE.md`, and `LICENSE`.
 
 ```text
 <repository>/
-├── PROJECT.md
-├── PLAN.md
+├── README.md
+├── AGENTS.md
+├── CLAUDE.md
+├── LICENSE
+├── docs/
+│   ├── en/              # PROJECT.md, PLAN.md, PERFORMANCE.md, RELEASING.md, THIRD_PARTY.md
+│   └── ja/              # README.md and Japanese counterparts
 ├── package.json
 ├── index.html
 ├── vite.config.ts
@@ -140,6 +148,8 @@ Split files according to actual complexity. Avoid a UI framework, state-manageme
 5. **Security and performance:** Try inputs with `<script>`, event attributes, `javascript:` links, and dangerous image URLs. Confirm there is no arbitrary script execution, external WebView navigation, or arbitrary local file read. On one machine, repeatedly measure clean and successive command-to-render times, memory use, and JS bundle size. Record the values and improve only the slow paths.
 
 ### Phase 1 completion criteria
+
+Automated checks cover real local file notifications through document refresh in Rust, and change subscriptions through DOM updates in the frontend. These checks share the application's processing functions. The Tauri event transport, OS link opening, native window lifecycle, and WKWebView behavior still require macOS integration checks; passing the separate suites does not establish that full path.
 
 - `mjp README.md` returns the prompt quickly while the preview remains useful for a short reading session.
 - The requested Markdown/GFM syntax and common code languages are readable.

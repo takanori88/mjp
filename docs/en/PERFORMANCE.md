@@ -1,6 +1,6 @@
 # mjp Phase 2 performance measurements
 
-[日本語](docs/ja/PERFORMANCE.md)
+[日本語](../ja/PERFORMANCE.md)
 
 The first measurements below were taken on 2026-10-06 under the former name `mdq`. The project was renamed to `mjp` on 2026-10-08. The original command name and environment variable are retained as historical facts. The final section records the current display-mode measurements.
 

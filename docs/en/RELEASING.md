@@ -1,12 +1,12 @@
 # Publishing the source
 
-[日本語](docs/ja/RELEASING.md)
+[日本語](../ja/RELEASING.md)
 
 The first publication is source-only, for macOS Apple Silicon. It does not include prebuilt executables, a Homebrew package, or an installer. The repository owner controls commits, pushes, tags, releases, and visibility changes.
 
 ## Local verification
 
-Use the tool versions in [README.md](README.md), and run from the repository root:
+Use the tool versions in [README.md](../../README.md), and run from the repository root:
 
 ```sh
 npm ci

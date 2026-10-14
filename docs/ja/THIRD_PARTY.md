@@ -1,6 +1,6 @@
 # 第三者の依存物
 
-[English](../../THIRD_PARTY.md)
+[English](../en/THIRD_PARTY.md)
 
 このリポジトリの MIT License は mjp 自身のコードに適用されます。依存物には各プロジェクトのライセンスが適用されます。依存物のソースはリポジトリに同梱せず、ビルド時に npm と Cargo が取得します。
 

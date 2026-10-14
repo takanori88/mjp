@@ -1,6 +1,6 @@
 # mjp — Markdown. Just Preview.
 
-[English](../../PROJECT.md)
+[English](../en/PROJECT.md)
 
 この文書は製品の目的と当初の Phase 1 の範囲を記録する。現在実装済みの動作とビルド方法は [README.md](README.md) を参照する。
 

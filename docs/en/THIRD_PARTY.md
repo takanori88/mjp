@@ -1,6 +1,6 @@
 # Third-party dependencies
 
-[日本語](docs/ja/THIRD_PARTY.md)
+[日本語](../ja/THIRD_PARTY.md)
 
 The MIT license in this repository covers mjp's own code. Dependencies retain their upstream licenses. Their source is not vendored in this repository; npm and Cargo obtain it when building.
 

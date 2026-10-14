@@ -1,6 +1,6 @@
 # ソースの公開手順
 
-[English](../../RELEASING.md)
+[English](../en/RELEASING.md)
 
 初回は macOS Apple Silicon 向けのソースのみを公開します。ビルド済み実行ファイル、Homebrew パッケージ、インストーラーは含みません。コミット、プッシュ、タグ、リリース、公開設定の操作はリポジトリ所有者が行います。
 

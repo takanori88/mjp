@@ -1,8 +1,8 @@
 # mjp — Markdown. Just Preview.
 
-[日本語](docs/ja/PROJECT.md)
+[日本語](../ja/PROJECT.md)
 
-This document records the product goals and original Phase 1 scope. For currently implemented behavior and build instructions, see [README.md](README.md).
+This document records the product goals and original Phase 1 scope. For currently implemented behavior and build instructions, see [README.md](../../README.md).
 
 ## 1. Project overview
 
@@ -112,7 +112,7 @@ Accept relative and absolute paths. When a file does not exist, report a clear e
 mjp: README2.md: file not found
 ```
 
-The original plan left handling of non-Markdown extensions for implementation. The current implementation attempts to read them as UTF-8 text; see [README.md](README.md).
+The original plan left handling of non-Markdown extensions for implementation. The current implementation attempts to read them as UTF-8 text; see [README.md](../../README.md).
 
 ### Markdown rendering
 
