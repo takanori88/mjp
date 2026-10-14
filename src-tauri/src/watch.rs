@@ -15,29 +15,40 @@ const SETTLE_TIME: Duration = Duration::from_millis(140);
 const MAX_SETTLE_TIME: Duration = Duration::from_millis(700);
 
 pub fn start(app: AppHandle, path: PathBuf) -> Result<(), Box<dyn Error>> {
-    let parent = path.parent().ok_or("file has no parent directory")?;
-    let (tx, rx) = mpsc::channel();
-    let mut watcher = notify::recommended_watcher(tx)?;
-    watcher.watch(parent, RecursiveMode::NonRecursive)?;
-
+    let (watcher, rx) = subscribe(&path)?;
     thread::Builder::new()
         .name("mjp-file-watch".into())
         .spawn(move || {
             let _watcher = watcher;
-            while let Ok(event) = rx.recv() {
-                if !is_relevant(&event, &path) {
-                    continue;
-                }
-                if !wait_for_settle(&rx, &path) {
-                    return;
-                }
-
+            process_events(&rx, &path, || {
                 if let Some(revision) = app.state::<Document>().refresh() {
                     let _ = app.emit_to("main", "document-changed", revision);
                 }
-            }
+            });
         })?;
     Ok(())
+}
+
+fn subscribe(
+    path: &Path,
+) -> Result<(notify::RecommendedWatcher, Receiver<notify::Result<Event>>), Box<dyn Error>> {
+    let parent = path.parent().ok_or("file has no parent directory")?;
+    let (tx, rx) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(tx)?;
+    watcher.watch(parent, RecursiveMode::NonRecursive)?;
+    Ok((watcher, rx))
+}
+
+fn process_events(rx: &Receiver<notify::Result<Event>>, path: &Path, mut changed: impl FnMut()) {
+    while let Ok(event) = rx.recv() {
+        if !is_relevant(&event, path) {
+            continue;
+        }
+        if !wait_for_settle(rx, path) {
+            return;
+        }
+        changed();
+    }
 }
 
 fn wait_for_settle(rx: &Receiver<notify::Result<Event>>, target: &Path) -> bool {
@@ -80,6 +91,92 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    use std::{fs, time::SystemTime};
+
+    struct WatchedDocument {
+        directory: PathBuf,
+        watcher: Option<notify::RecommendedWatcher>,
+        worker: Option<thread::JoinHandle<()>>,
+        updates: Receiver<crate::Snapshot>,
+    }
+
+    impl WatchedDocument {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let directory =
+                std::env::temp_dir().join(format!("mjp-watch-{}-{unique}", std::process::id()));
+            fs::create_dir(&directory).unwrap();
+            let path = directory.join("selected.md");
+            fs::write(&path, "# Initial").unwrap();
+            let document = crate::load_document([path.clone().into_os_string()]).unwrap();
+            let (watcher, events) = subscribe(&path).unwrap();
+            let (send, updates) = mpsc::channel();
+            let worker = thread::spawn(move || {
+                process_events(&events, &path, || {
+                    if document.refresh().is_some() {
+                        send.send(document.snapshot().unwrap()).unwrap();
+                    }
+                });
+            });
+            Self {
+                directory,
+                watcher: Some(watcher),
+                worker: Some(worker),
+                updates,
+            }
+        }
+
+        fn next(&self) -> crate::Snapshot {
+            self.updates
+                .recv_timeout(Duration::from_secs(5))
+                .expect("a file change did not publish a snapshot")
+        }
+    }
+
+    impl Drop for WatchedDocument {
+        fn drop(&mut self) {
+            self.watcher.take();
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+            let _ = fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    #[test]
+    fn saves_replacements_and_recreation_publish_current_snapshots() {
+        let watched = WatchedDocument::new();
+        let path = watched.directory.join("selected.md");
+
+        fs::write(&path, "# Saved").unwrap();
+        let saved = watched.next();
+        assert_eq!(saved.text, "# Saved");
+        assert!(saved.error.is_none());
+        assert!(saved.revision > 0);
+
+        let replacement = watched.directory.join("replacement.md");
+        fs::write(&replacement, "# Replaced").unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        let replaced = watched.next();
+        assert_eq!(replaced.text, "# Replaced");
+        assert!(replaced.error.is_none());
+        assert!(replaced.revision > saved.revision);
+
+        fs::remove_file(&path).unwrap();
+        let missing = watched.next();
+        assert_eq!(missing.text, "# Replaced");
+        assert!(missing.error.is_some());
+        assert!(missing.revision > replaced.revision);
+
+        fs::write(&path, "# Replaced").unwrap();
+        let restored = watched.next();
+        assert_eq!(restored.text, "# Replaced");
+        assert!(restored.error.is_none());
+        assert!(restored.revision > missing.revision);
+    }
 
     fn delay_during_events(event_path: &str) -> Duration {
         let (sender, receiver) = mpsc::channel();

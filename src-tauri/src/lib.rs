@@ -289,14 +289,44 @@ mod tests {
 
     #[test]
     fn reads_absolute_and_relative_paths() {
-        let absolute = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../PROJECT.md");
+        use std::io::Write;
+
+        struct Fixture(PathBuf);
+
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+
+        // A local fixture avoids changing the process-wide working directory during parallel tests.
+        let relative = PathBuf::from(format!(
+            ".mjp-paths-{}-{:?}.md",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let absolute = std::env::current_dir().unwrap().join(&relative);
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+
+            options.mode(0o600);
+        }
+        let mut file = options.open(&absolute).unwrap();
+        let _fixture = Fixture(absolute.clone());
+        let text = "# Path fixture\n\nTemporary document.\n";
+        file.write_all(text.as_bytes()).unwrap();
+        drop(file);
+
         let document = load(&absolute).unwrap();
-        assert!(document.snapshot().unwrap().text.starts_with("# mjp"));
+        assert_eq!(document.snapshot().unwrap().text, text);
         assert!(document.path.is_absolute());
 
-        let relative = PathBuf::from("../PROJECT.md");
-        let document = load(&relative).unwrap();
-        assert!(document.snapshot().unwrap().text.starts_with("# mjp"));
+        let relative_document = load(&relative).unwrap();
+        assert_eq!(relative_document.snapshot().unwrap().text, text);
+        assert_eq!(relative_document.path, document.path);
     }
 
     #[test]
