@@ -34,6 +34,16 @@ Files up to 128 KiB are formatted as Markdown. Larger files show their complete 
 
 Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app. Relative file links are not opened. Raw HTML remains plain text.
 
+### Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Esc`, `q`, `⌘W` | Close the preview on macOS. |
+| `j`, `k` | Scroll down or up. |
+| `Ctrl+D`, `Ctrl+U` | Scroll down or up by half a window. |
+| `gg` | Jump to the top (press the two `g` keys within one second). |
+| `G` (`Shift+G`) | Jump to the bottom. |
+
 ### Local images
 
 Use Markdown image syntax, for example `![Preview](images/preview.png)`. Paths are relative to the Markdown file. In a Git working tree, images may come from anywhere within the nearest repository root, including paths such as `../images/preview.png`. Otherwise, images must stay in the Markdown file's directory or its subdirectories. Symlinks, absolute paths, remote URLs, inline data URLs, and SVG are not loaded.
@@ -67,16 +77,6 @@ If you already define `open.rules`, you can instead insert these two Markdown ru
 4. Quit Neovim to return to Yazi. The preview stays open; focus it and press `Esc` or `q` when finished.
 
 The macOS release CLI detaches the preview itself, so `&&` can start Neovim after the CLI succeeds. `block = true` lets Neovim use the terminal until it exits; no `&` or `orphan = true` is needed for this opener. This workflow assumes a release build, not `tauri dev`.
-
-## Keyboard shortcuts
-
-| Shortcut | Action |
-| --- | --- |
-| `Esc`, `q`, `⌘W` | Close the preview on macOS. |
-| `j`, `k` | Scroll down or up. |
-| `Ctrl+D`, `Ctrl+U` | Scroll down or up by half a window. |
-| `gg` | Jump to the top (press the two `g` keys within one second). |
-| `G` (`Shift+G`) | Jump to the bottom. |
 
 ## Installation
 
