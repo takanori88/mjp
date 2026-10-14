@@ -82,6 +82,8 @@ macOS のリリース版は mjp 自身がプレビューを別プロセスに切
 
 初回は macOS Apple Silicon 向けのソース公開です。公開済みのバイナリ、インストーラー、Homebrew パッケージはまだありません。
 
+Windows と Linux への対応は後の段階で予定しており、現時点では未対応です。
+
 [Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos)、Rust 1.90以降、Node.js 24.x（24.15.0以降）と npm を用意し、リポジトリのルートでビルドします。
 
 ```sh

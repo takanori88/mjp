@@ -82,6 +82,8 @@ The macOS release CLI detaches the preview itself, so `&&` can start Neovim afte
 
 The initial distribution is source-only, for macOS Apple Silicon. There is no published binary, installer, or Homebrew package yet.
 
+Windows and Linux support is planned for a later phase; neither is currently supported.
+
 Install [Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos), Rust 1.90 or newer, and Node.js 24.x (24.15.0 or newer), with npm. Then build from the repository root:
 
 ```sh
