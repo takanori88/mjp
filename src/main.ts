@@ -12,6 +12,7 @@ await startPreview(
     subscribe: changed => listen("document-changed", () => { void changed(); }),
     close: () => invoke("close_preview"),
     openExternal: url => invoke("open_external", { url }),
+    writeText: text => navigator.clipboard.writeText(text),
     mark: import.meta.env.VITE_MJP_PERF === "1"
       ? stage => {
         void invoke("perf_mark", { stage, renderedMs: performance.timeOrigin + performance.now() });

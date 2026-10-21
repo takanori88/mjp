@@ -83,6 +83,84 @@ body { margin: 0; }
   line-height: 1.5;
 }
 .markdown-body pre code { display: block; min-width: max-content; }
+.code-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 50px;
+  margin-bottom: 1em;
+  border-radius: 6px;
+  background: var(--surface);
+}
+.code-actions {
+  position: relative;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  padding: 8px 10px 8px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.copy-feedback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.copy-tooltip {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: calc(100% - 2px);
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: min(240px, calc(100vw - 100px));
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 5px;
+  color: #ffffff;
+  background: #25292e;
+  box-shadow: 0 2px 6px #0003;
+  visibility: hidden;
+  pointer-events: none;
+  transition: visibility 0s;
+}
+.code-actions:hover .copy-tooltip,
+.code-actions button:focus-visible ~ .copy-tooltip {
+  visibility: visible;
+  pointer-events: auto;
+}
+.code-actions:hover .copy-tooltip { transition-delay: 200ms; }
+.code-actions button:focus-visible ~ .copy-tooltip,
+.code-actions button:not([data-state="idle"]) ~ .copy-tooltip { transition-delay: 0s; }
+.code-actions button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+}
+.code-actions button:hover { color: var(--link); }
+.code-actions button[data-state="success"] { color: #1a7f37; }
+.code-actions button[data-state="error"] { color: #cf222e; }
+.code-actions button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.code-actions button[aria-disabled="true"] { cursor: progress; }
+.markdown-body .code-block pre {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  margin: 0;
+}
 .markdown-body table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 5px 12px; }
 .markdown-body th { font-weight: 650; background: var(--surface); }
@@ -103,6 +181,9 @@ body { margin: 0; }
     --link: #72b7ff;
   }
   #status { color: #ffe2a3; background: #4c3b20; border-color: #7d6032; }
+  .copy-tooltip { color: #ffffff; background: #3d444d; }
+  .code-actions button[data-state="success"] { color: #3fb950; }
+  .code-actions button[data-state="error"] { color: #ff7b72; }
   .hljs-comment, .hljs-quote { color: #89949f; }
   .hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #ff7b89; }
   .hljs-string, .hljs-attr { color: #a9d68f; }

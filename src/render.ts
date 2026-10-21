@@ -2,6 +2,7 @@ import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import taskLists from "markdown-it-task-lists";
 import { highlightCode, highlighter } from "./highlight.ts";
+import { addCodeCopyButtons, type WriteText } from "./copy.ts";
 import { isLocalImage, loadImages, MAX_IMAGES, type ImageReference, type ReadImage } from "./images.ts";
 
 export type Snapshot = {
@@ -12,6 +13,11 @@ export type Snapshot = {
 };
 
 const markdown = new MarkdownIt({ html: false, breaks: false }).use(taskLists);
+const renderFence = markdown.renderer.rules.fence!;
+markdown.renderer.rules.fence = (tokens, index, options, env, renderer) => {
+  tokens[index].attrSet("data-mjp-fence", "");
+  return renderFence(tokens, index, options, env, renderer);
+};
 markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
   const token = tokens[index];
   const alt = renderer.renderInlineAsText(token.children ?? [], options, env);
@@ -42,13 +48,18 @@ export function createDocumentRenderer(
   status: HTMLElement,
   mark?: (stage: string) => void,
   readImage?: ReadImage,
+  writeText?: WriteText,
 ): (snapshot: Snapshot) => void {
   const view = article.ownerDocument.defaultView!;
   let lastRevision = -1;
   let lastText: string | null = null;
   let lastPlainText = false;
   let disposeImages = () => {};
-  view.addEventListener("pagehide", () => disposeImages());
+  let disposeCopyButtons = () => {};
+  view.addEventListener("pagehide", () => {
+    disposeImages();
+    disposeCopyButtons();
+  });
   return function render(snapshot: Snapshot): void {
     if (snapshot.revision < lastRevision) return;
     lastRevision = snapshot.revision;
@@ -62,6 +73,7 @@ export function createDocumentRenderer(
 
     if (snapshot.text === lastText) return;
     disposeImages();
+    disposeCopyButtons();
     const scrollY = view.scrollY;
     if (plainText) {
       const pre = article.ownerDocument.createElement("pre");
@@ -90,6 +102,7 @@ export function createDocumentRenderer(
         if (!language || !highlighter.getLanguage(language)) continue;
         highlightCode(code, language);
       }
+      if (writeText) disposeCopyButtons = addCodeCopyButtons(article, writeText);
       if (readImage) disposeImages = loadImages(article, images, readImage);
     }
     lastPlainText = plainText;

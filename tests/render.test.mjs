@@ -11,7 +11,7 @@ function setup() {
   const article = dom.window.document.createElement('article');
   const status = dom.window.document.createElement('aside');
   const stages = [];
-  const render = createDocumentRenderer(article, status, stage => stages.push(stage));
+  const render = createDocumentRenderer(article, status, stage => stages.push(stage), undefined, async () => {});
   return { article, status, stages, render };
 }
 

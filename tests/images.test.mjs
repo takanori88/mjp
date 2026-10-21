@@ -151,6 +151,7 @@ test('connects preview image reads and refreshes them after Markdown changes', a
   let changed;
   const requests = [];
   await startPreview(f.article, f.status, {
+    writeText: async () => {},
     getDocument: async () => ({ text, revision, error: null, warning: null }),
     getImage: async reference => { requests.push(reference); return png(); },
     subscribe: async callback => { changed = callback; },
