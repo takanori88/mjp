@@ -25,6 +25,7 @@ async function setup(t, deferred = false) {
     },
     close: async () => { calls.push('close'); },
     openExternal: async url => { calls.push(['open', url]); },
+    writeText: async text => { calls.push(['copy', text]); },
   });
   await new Promise(resolve => setImmediate(resolve));
   if (!deferred) await boot;
@@ -210,4 +211,24 @@ test('leaves ordinary nonlink clicks available', async t => {
   f.article.querySelector('h1').dispatchEvent(event);
   assert.equal(event.defaultPrevented, false);
   assert.deepEqual(f.calls.filter(Array.isArray), []);
+});
+
+test('connects code copying to the bridge and leaves button keys available', async t => {
+  const f = await setup(t);
+  f.setSnapshot(snapshot('```js\nconst answer = 42;\n```', 1));
+  await f.changed();
+  const button = f.article.querySelector('button');
+  button.focus();
+  for (const key of ['Tab', 'Enter', ' ', 'j', 'k', 'q']) {
+    assert.equal(f.key(key, {}, button).defaultPrevented, false);
+  }
+  assert.equal(f.calls.includes('close'), false);
+  assert.equal(f.by.mock.callCount(), 0);
+  button.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.calls.filter(Array.isArray), [['copy', 'const answer = 42;\n']]);
+  assert.equal(f.article.querySelector('[role="status"]').textContent, 'Copied');
+  assert.equal(f.window.document.activeElement, button);
+  assert.equal(f.key('Escape', {}, button).defaultPrevented, true);
+  assert.equal(f.calls.includes('close'), true);
 });

@@ -16,6 +16,7 @@ mjp README.md
 
 - Renders Markdown, including tables and task lists, in a single window.
 - Highlights fenced code blocks for common languages.
+- Copies fenced code blocks with a button or keyboard activation.
 - Displays local PNG, JPEG, GIF, and WebP images referenced in Markdown.
 - Follows the system light or dark appearance.
 - Reloads the preview when the file changes, preserving the scroll position when possible.
@@ -44,11 +45,15 @@ Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app
 | `gg` | Jump to the top (press the two `g` keys within one second). |
 | `G` (`Shift+G`) | Jump to the bottom. |
 
+### Copying code
+
+Each fenced code block has a copy button; click it, or press Enter or Space while it has focus. The copied text keeps indentation and trailing newlines, but leaves out control characters and other invisible characters that the preview does not display. Inline code, indented code blocks, and the large-file plain-text view have no button, and reading shortcuts such as `j` are inactive while a button has focus.
+
 ### Local images
 
-Use Markdown image syntax, for example `![Preview](images/preview.png)`. Paths are relative to the Markdown file. In a Git working tree, images may come from anywhere within the nearest repository root, including paths such as `../images/preview.png`. Otherwise, images must stay in the Markdown file's directory or its subdirectories. Symlinks, absolute paths, remote URLs, inline data URLs, and SVG are not loaded.
+Use Markdown image syntax, for example `![Preview](images/preview.png)`, with paths relative to the Markdown file. In a Git working tree, images may come from anywhere within the nearest repository root, such as `../images/preview.png`; otherwise they must be in the Markdown file's directory or below it. Symlinks, absolute paths, remote URLs, data URLs, and SVG are not loaded, and unavailable images show their alt text.
 
-Images fit the window while preserving their proportions. Unavailable images retain their alt text. Each image is limited to 10 MiB; a rendered document loads at most 64 image occurrences and 32 MiB of distinct image data. Image files are not watched separately: reopen the preview to pick up an image-only edit, or change and save the Markdown text.
+Each image is limited to 10 MiB, and a document loads at most 64 image references and 32 MiB of distinct image data. Image files are not watched: after editing only an image, reopen the preview or change and save the Markdown text.
 
 ### Yazi + Neovim + mjp
 

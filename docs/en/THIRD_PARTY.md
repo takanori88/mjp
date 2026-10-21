@@ -24,3 +24,31 @@ This table records the direct application dependencies (and tauri-build) resolve
 `OR` expressions offer alternative licenses; `AND` expressions require all listed terms. Transitive Rust dependencies include MPL-2.0 and Unicode-3.0 components. The MPL permits combination with separately licensed code, while requiring recipients of compiled MPL components to be told where their corresponding source is available. See the [Mozilla FAQ, question 8](https://www.mozilla.org/en-US/MPL/2.0/FAQ/#q8-i-want-to-distribute-outside-my-organization-executable-programs-or-libraries-that-i-have-compiled-from-someone-elses-unchanged-mpl-licensed-source-code-either-standalone-or-part-of-a-larger-work-what-do-i-have-to-do).
 
 The initial publication is source-only. This overview is not a complete binary-distribution notice bundle. Before distributing binaries, collect the exact included dependency versions, their copyright and license texts, required NOTICE files, Rust runtime notices, and source-availability information. Some crate archives refer to license files in their upstream repository; resolve those files at the crate's recorded source revision rather than substituting a generic license text.
+
+## Embedded code
+
+`src/copy.ts` embeds the SVG path data of the `copy-16`, `check-16`, and `x-16` icons from [@primer/octicons](https://www.npmjs.com/package/@primer/octicons/v/19.41.0) 19.41.0. That data remains under its MIT License:
+
+```text
+MIT License
+
+Copyright (c) 2026 GitHub Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

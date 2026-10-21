@@ -24,3 +24,31 @@
 `OR` は選択可能なライセンス、`AND` は列挙された条件をすべて満たすことを表します。Rust の間接依存には MPL-2.0 と Unicode-3.0 のものもあります。MPL は別のライセンスのコードとの組み合わせを認めますが、MPL 部分をコンパイルして配布する際には、対応するソースの入手先を利用者へ案内する必要があります。[Mozilla FAQ の質問8](https://www.mozilla.org/en-US/MPL/2.0/FAQ/#q8-i-want-to-distribute-outside-my-organization-executable-programs-or-libraries-that-i-have-compiled-from-someone-elses-unchanged-mpl-licensed-source-code-either-standalone-or-part-of-a-larger-work-what-do-i-have-to-do)を参照してください。
 
 初回はソースのみの公開です。この一覧は、バイナリ配布に必要な表示をすべて同梱したものではありません。バイナリ配布前に、実際に含まれる依存バージョン、著作権・ライセンス本文、必要な NOTICE、Rust ランタイムの表示、対応するソースの入手先を揃えます。一部の crate は上流リポジトリのライセンスを参照しているため、一般的なライセンス本文で代用せず、その crate に記録されたソースのリビジョンから取得します。
+
+## 同梱しているコード
+
+`src/copy.ts` には [@primer/octicons](https://www.npmjs.com/package/@primer/octicons/v/19.41.0) 19.41.0 の `copy-16`・`check-16`・`x-16` アイコンの SVG パスデータを埋め込んでいます。このデータには次の MIT License が適用されます（原文）。
+
+```text
+MIT License
+
+Copyright (c) 2026 GitHub Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
