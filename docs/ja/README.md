@@ -89,7 +89,7 @@ macOS のリリース版は mjp 自身がプレビューを別プロセスに切
 
 Windows と Linux への対応は後の段階で予定しており、現時点では未対応です。
 
-[Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos)、Rust 1.90以降、Node.js 24.x（24.15.0以降）と npm を用意し、リポジトリのルートでビルドします。
+[Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos)、Rust 1.90以降、Node.js 24.x（24.22.1以降）と npm を用意し、リポジトリのルートでビルドします。
 
 ```sh
 git clone https://github.com/takanori88/mjp.git
@@ -119,7 +119,7 @@ mjp README.md
 
 ## 開発
 
-CLI、ウィンドウ、ファイル監視には Tauri 2 と Rust を使用します。プレビューは Vanilla TypeScript、Vite、markdown-it、DOMPurify、highlight.js で構成しています。開発・検証対象は現在 macOS Apple Silicon です。Rust 1.90以降、Node.js 24.xの24.15.0以降、npm、Tauriが要求するmacOS開発ツールを使用してください。DOMテストにはjsdomとTypeScriptに対応したNode標準テストランナーを使います。
+CLI、ウィンドウ、ファイル監視には Tauri 2 と Rust を使用します。プレビューは Vanilla TypeScript、Vite、markdown-it、DOMPurify、highlight.js で構成しています。開発・検証対象は現在 macOS Apple Silicon です。Rust 1.90以降、Node.js 24.xの24.22.1以降、npm、Tauriが要求するmacOS開発ツールを使用してください。DOMテストにはjsdomとTypeScriptに対応したNode標準テストランナーを使います。
 
 ```sh
 npm ci
