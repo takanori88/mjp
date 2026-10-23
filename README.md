@@ -89,7 +89,7 @@ The initial distribution is source-only, for macOS Apple Silicon. There is no pu
 
 Windows and Linux support is planned for a later phase; neither is currently supported.
 
-Install [Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos), Rust 1.90 or newer, and Node.js 24.x (24.15.0 or newer), with npm. Then build from the repository root:
+Install [Xcode Command Line Tools](https://v2.tauri.app/start/prerequisites/#macos), Rust 1.90 or newer, and Node.js 24.x (24.22.1 or newer), with npm. Then build from the repository root:
 
 ```sh
 git clone https://github.com/takanori88/mjp.git
@@ -119,7 +119,7 @@ Use `build:release` for binaries you intend to share. It remaps the build machin
 
 ## Development
 
-The app uses Tauri 2 and Rust for the CLI, window, and file watching, with Vanilla TypeScript, Vite, markdown-it, DOMPurify, and highlight.js for the preview. Development currently targets macOS Apple Silicon. Use Rust 1.90 or newer, Node.js 24.15.0 or newer within the 24.x line, npm, and the macOS development tools required by Tauri. DOM tests use jsdom and Node's built-in test runner with TypeScript support.
+The app uses Tauri 2 and Rust for the CLI, window, and file watching, with Vanilla TypeScript, Vite, markdown-it, DOMPurify, and highlight.js for the preview. Development currently targets macOS Apple Silicon. Use Rust 1.90 or newer, Node.js 24.22.1 or newer within the 24.x line, npm, and the macOS development tools required by Tauri. DOM tests use jsdom and Node's built-in test runner with TypeScript support.
 
 ```sh
 npm ci
