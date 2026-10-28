@@ -219,7 +219,7 @@ After the MVP, consider a theme override:
 mjp README.md --theme dark
 ```
 
-Piped content could be particularly useful:
+One-shot standard input is now supported:
 
 ```sh
 cat README.md | mjp
@@ -227,7 +227,7 @@ git show HEAD:README.md | mjp
 mjp -
 ```
 
-These are ideas, not currently supported commands. Stdin support is a high-priority Phase 2 candidate.
+The theme override remains a future idea. Standard input is read once to EOF; live streaming and editor integration remain future work. See [README.md](../../README.md) for current limits and behavior.
 
 ## 13. Cross-platform scope
 

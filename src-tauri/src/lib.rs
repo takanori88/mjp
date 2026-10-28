@@ -79,14 +79,31 @@ pub struct Snapshot {
 
 #[derive(Debug)]
 pub struct Document {
-    path: PathBuf,
+    path: Option<PathBuf>,
     images: Option<Arc<images::ImageScope>>,
     snapshot: Mutex<Snapshot>,
 }
 
 impl Document {
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    pub fn into_text(self) -> Result<String, String> {
+        self.snapshot
+            .into_inner()
+            .map(|snapshot| snapshot.text)
+            .map_err(|_| "document state is unavailable".into())
+    }
+
+    fn title(&self) -> String {
+        match self.path() {
+            Some(path) => path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "mjp".into()),
+            None => "stdin".into(),
+        }
     }
 
     fn snapshot(&self) -> Result<Snapshot, String> {
@@ -97,13 +114,14 @@ impl Document {
     }
 
     fn refresh(&self) -> Option<u64> {
-        let mut result = read_markdown(&self.path);
+        let path = self.path()?;
+        let mut result = read_markdown(path);
         for _ in 0..2 {
             if result.is_ok() {
                 break;
             }
             thread::sleep(Duration::from_millis(35));
-            result = read_markdown(&self.path);
+            result = read_markdown(path);
         }
 
         let mut snapshot = self.snapshot.lock().ok()?;
@@ -161,7 +179,29 @@ pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Documen
 
     Ok(Document {
         images: images::ImageScope::new(&path).ok().map(Arc::new),
-        path,
+        path: Some(path),
+        snapshot: Mutex::new(Snapshot {
+            text,
+            error: None,
+            warning: None,
+            revision: 0,
+        }),
+    })
+}
+
+pub fn load_stdin(input: impl Read) -> Result<Document, String> {
+    let mut bytes = Vec::new();
+    input
+        .take(MAX_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("stdin: cannot read input: {error}"))?;
+    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err("stdin: input is too large (max 10 MiB)".into());
+    }
+    let text = String::from_utf8(bytes).map_err(|_| "stdin: input is not valid UTF-8")?;
+    Ok(Document {
+        path: None,
+        images: None,
         snapshot: Mutex::new(Snapshot {
             text,
             error: None,
@@ -227,11 +267,7 @@ fn perf_mark(stage: String, rendered_ms: f64) {
 }
 
 pub fn run(document: Document) -> tauri::Result<()> {
-    let title = document
-        .path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "mjp".into());
+    let title = document.title();
     let watched_path = document.path.clone();
 
     #[cfg(feature = "perf")]
@@ -256,9 +292,11 @@ pub fn run(document: Document) -> tauri::Result<()> {
     ]);
     builder
         .setup(move |app| {
-            if let Err(error) = watch::start(app.handle().clone(), watched_path) {
-                app.state::<Document>()
-                    .set_warning(format!("Live reload is unavailable: {error}"));
+            if let Some(path) = watched_path {
+                if let Err(error) = watch::start(app.handle().clone(), path) {
+                    app.state::<Document>()
+                        .set_warning(format!("Live reload is unavailable: {error}"));
+                }
             }
             let dev_url = app.config().build.dev_url.clone();
             let window =
@@ -287,6 +325,49 @@ mod tests {
 
     fn load(path: &Path) -> Result<Document, String> {
         load_document([path.as_os_str().to_os_string()])
+    }
+
+    #[test]
+    fn stdin_preserves_text_without_a_file_or_image_scope() {
+        for text in ["", "# 日本語\r\n\n\ttext\n", "no trailing newline"] {
+            let document = load_stdin(text.as_bytes()).unwrap();
+            assert!(document.path().is_none());
+            assert!(document.images.is_none());
+            assert_eq!(document.title(), "stdin");
+            assert_eq!(document.refresh(), None);
+            let snapshot = document.snapshot().unwrap();
+            assert_eq!(snapshot.text, text);
+            assert_eq!(snapshot.revision, 0);
+            assert!(snapshot.error.is_none());
+            assert!(snapshot.warning.is_none());
+            assert_eq!(document.into_text().unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn stdin_accepts_the_byte_limit_and_stops_reading_just_beyond_it() {
+        let document = load_stdin(io::repeat(b'a').take(MAX_DOCUMENT_BYTES)).unwrap();
+        assert_eq!(
+            document.into_text().unwrap().len() as u64,
+            MAX_DOCUMENT_BYTES
+        );
+        let mut input = io::Cursor::new(vec![b'a'; MAX_DOCUMENT_BYTES as usize + 100]);
+        assert!(load_stdin(&mut input).unwrap_err().contains("max 10 MiB"));
+        assert_eq!(input.position(), MAX_DOCUMENT_BYTES + 1);
+    }
+
+    #[test]
+    fn stdin_reports_invalid_utf8_and_read_failures() {
+        assert!(load_stdin([0xff].as_slice()).unwrap_err().contains("UTF-8"));
+        struct FailedRead;
+        impl Read for FailedRead {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("read fixture"))
+            }
+        }
+        let message = load_stdin(FailedRead).unwrap_err();
+        assert!(message.contains("stdin: cannot read input"));
+        assert!(message.contains("read fixture"));
     }
 
     #[test]
@@ -342,7 +423,7 @@ mod tests {
 
         let document = load(&absolute).unwrap();
         assert_eq!(document.snapshot().unwrap().text, text);
-        assert!(document.path.is_absolute());
+        assert!(document.path().unwrap().is_absolute());
 
         let relative_document = load(&relative).unwrap();
         assert_eq!(relative_document.snapshot().unwrap().text, text);

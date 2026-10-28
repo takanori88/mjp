@@ -1,5 +1,7 @@
 mod cli;
 
+use std::io::{self, IsTerminal};
+
 #[cfg(target_os = "macos")]
 mod launch;
 
@@ -10,7 +12,8 @@ fn main() {
     } else {
         "cli_entry"
     });
-    let input = match cli::parse(std::env::args_os().skip(1)) {
+    let stdin = io::stdin();
+    let input = match cli::parse(std::env::args_os().skip(1), stdin.is_terminal()) {
         Ok(cli::Command::Help) => {
             println!("{}", cli::HELP);
             return;
@@ -19,13 +22,14 @@ fn main() {
             println!("mjp {}", env!("CARGO_PKG_VERSION"));
             return;
         }
-        Ok(cli::Command::Preview(path)) => path,
+        Ok(cli::Command::Preview(path)) => mjp_lib::load_document([path]),
+        Ok(cli::Command::Stdin) => mjp_lib::load_stdin(stdin.lock()),
         Err(message) => {
             eprintln!("mjp: {message}");
             std::process::exit(2);
         }
     };
-    let document = match mjp_lib::load_document([input]) {
+    let document = match input {
         Ok(document) => document,
         Err(message) => {
             eprintln!("mjp: {message}");
@@ -37,7 +41,7 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     if !cfg!(debug_assertions) && std::env::var_os(launch::GUI_CHILD_ENV).is_none() {
-        if let Err(error) = launch::spawn_gui(document.path()) {
+        if let Err(error) = launch::spawn_gui(document) {
             eprintln!("mjp: cannot start preview: {error}");
             std::process::exit(1);
         }
