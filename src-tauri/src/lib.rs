@@ -59,7 +59,8 @@ fn read_markdown(path: &Path) -> Result<String, ReadError> {
         return Err(ReadError::TooLarge);
     }
 
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    let capacity = usize::try_from(metadata.len()).map_err(|_| ReadError::TooLarge)?;
+    let mut bytes = Vec::with_capacity(capacity);
     file.take(MAX_DOCUMENT_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(ReadError::Read)?;
