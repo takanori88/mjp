@@ -30,6 +30,10 @@ markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
 };
 
 export const MAX_MARKDOWN_BYTES = 128 * 1024;
+// Direction controls stay in code because right-to-left text needs them, so a block holding
+// them is labeled instead of rewritten; its displayed order may differ from what is copied.
+const directionControls = /[‪-‮⁦-⁩]/u;
+const directionNote = "This code contains bidirectional Unicode text that may be copied or run in a different order than shown.";
 
 export function externalUrl(anchor: HTMLAnchorElement): string | null {
   const href = anchor.getAttribute("href");
@@ -101,6 +105,14 @@ export function createDocumentRenderer(
           ?.slice("language-".length);
         if (!language || !highlighter.getLanguage(language)) continue;
         highlightCode(code, language);
+      }
+      for (const code of article.querySelectorAll<HTMLElement>("pre > code")) {
+        if (!directionControls.test(code.textContent ?? "")) continue;
+        const note = article.ownerDocument.createElement("div");
+        note.className = "direction-note";
+        note.setAttribute("role", "note");
+        note.textContent = directionNote;
+        code.parentElement!.before(note);
       }
       if (writeText) disposeCopyButtons = addCodeCopyButtons(article, writeText);
       if (readImage) disposeImages = loadImages(article, images, readImage);
