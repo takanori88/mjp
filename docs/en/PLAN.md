@@ -14,7 +14,7 @@ On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Previ
 
 | Area | Phase 1 requirement |
 | --- | --- |
-| CLI | Accept relative and absolute paths, then return the prompt while the GUI remains open. For missing or multiple arguments, a nonexistent or unreadable file, or a directory, print a clear reason to standard error and exit nonzero before opening a window. Attempt to read non-Markdown extensions as text. Report invalid UTF-8 clearly. |
+| CLI | Accept relative and absolute paths, then return the prompt while the GUI remains open. For multiple file arguments, a nonexistent or unreadable file, or a directory, print a clear reason to standard error and exit nonzero before opening a window. Attempt to read non-Markdown extensions as text. Report invalid UTF-8 clearly. |
 | Display | Render CommonMark and GFM headings, paragraphs, emphasis, strikethrough, links, quotes, lists, task lists, tables, inline code, fenced code, and horizontal rules. Allow scrolling through long documents and wide tables or code. |
 | Code | Highlight fenced code in common languages. Render unknown languages as escaped plain text. |
 | Appearance | Follow the OS light/dark setting. Prioritize readable content width, line spacing, heading hierarchy, code, and tables. Do not add a toolbar, sidebar, tabs, or settings UI. |
@@ -22,7 +22,7 @@ On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Previ
 | Close | Exit the window and process on `Esc`, macOS `Cmd+W`, or the normal window close action. Consider `Ctrl+W` when Windows/Linux support is implemented. |
 | Performance | Measure startup time. Set a formal threshold after initial measurements on the target machine, and prioritize performance improvements over added features. |
 
-The exclusions in [PROJECT.md](PROJECT.md), sections 6, 7, 12, and 14, still apply. Mermaid, KaTeX, stdin, multiple files, and automated distribution are later-stage work. Images were not part of the initial minimum display requirements. Local raster images are now supported for Markdown reading sessions, as described below; remote images and raw HTML remain outside the scope.
+The exclusions in [PROJECT.md](PROJECT.md), sections 6, 7, 12, and 14, still apply. Mermaid, KaTeX, live streaming, multiple files, and automated distribution remain later-stage work. One-shot standard input is now supported as described below. Images were not part of the initial minimum display requirements. Local raster images are now supported for Markdown reading sessions, as described below; remote images and raw HTML remain outside the scope.
 
 A later UX decision added a small set of Vim-style keys so reading and closing can stay keyboard-only. It does not introduce editing modes or mode management.
 
@@ -101,6 +101,14 @@ terminal: mjp README.md
 - `Esc` and other shortcuts use small frontend handlers to request exit. The native window close path must also terminate the process; check for orphaned processes on macOS.
 - Use one window about 800 px wide, with a CSS limit on content width. Adapt to narrower screens. Begin with the standard title bar; do not build a custom one before measuring startup and interaction.
 - Plain and modifier clicks keep opening supported links in the default application. Auxiliary link clicks and drops have no preview action. DOM drop handlers cover the entire window, including margins. Keep Tauri's native drag-drop handling enabled as before; this setting controls native event handling rather than declaring whether the application accepts drops.
+
+### One-shot standard input
+
+Accept `command | mjp` and `mjp < file` without requiring an input flag. An explicit file takes precedence, `mjp -` explicitly selects stdin, and `mjp -- -` selects a file named `-`. With no arguments at a terminal, show help; explicit stdin at a terminal reports an error rather than waiting for interactive input. Read to EOF with the existing 10 MiB ceiling, checking at most one extra byte, and validate UTF-8 before starting a GUI. Preserve whitespace and allow an empty document. The existing 128 KiB rendering threshold still applies.
+
+Represent the document path as optional so standard input shares the existing snapshot and rendering pipeline without inventing a watched file. Use `stdin` as its title and leave its image scope unavailable. Relative image directories, custom titles, editor integration, and live streaming are separate follow-up work; do not infer filesystem access from the caller's working directory.
+
+In macOS release builds, transfer the validated text through an anonymous pipe to the detached GUI child. The child reads and validates its input before initializing the window. Close the pipe after writing so EOF completes the document; return after the handoff without waiting for the window to close. Stop and reap the child if writing fails. This keeps document text out of command arguments, environment variables, and temporary files. File-based startup keeps its existing path handoff, and development builds continue in the foreground. No additional dependencies or frontend IPC commands are needed.
 
 ## 4. File watching
 

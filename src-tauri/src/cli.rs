@@ -3,10 +3,14 @@ use std::ffi::OsString;
 pub const HELP: &str = "mjp — Markdown. Just Preview.
 
 Usage: mjp [--] <file>
+       command | mjp
+       mjp - < file
        mjp --help
        mjp --version
 
 Open one UTF-8 text file (up to 10 MiB) in a preview window.
+With no file, read piped or redirected UTF-8 input until EOF (up to 10 MiB).
+With no arguments at a terminal, show this help. Use - to select stdin explicitly.
 Use -- before a file name that begins with a dash.
 
 Options:
@@ -16,17 +20,28 @@ Options:
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Preview(OsString),
+    Stdin,
     Help,
     Version,
 }
 
-pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String> {
+pub fn parse(
+    args: impl IntoIterator<Item = OsString>,
+    stdin_is_terminal: bool,
+) -> Result<Command, String> {
     let mut args = args.into_iter();
-    let first = args.next().ok_or("usage: mjp [--] <file> (try --help)")?;
+    let Some(first) = args.next() else {
+        return Ok(if stdin_is_terminal {
+            Command::Help
+        } else {
+            Command::Stdin
+        });
+    };
     let command = match first.to_str() {
         Some("--") => Command::Preview(args.next().ok_or("expected a file after --")?),
         Some("-h" | "--help") => Command::Help,
         Some("-V" | "--version") => Command::Version,
+        Some("-") => Command::Stdin,
         Some(option) if option.starts_with('-') => {
             return Err(format!("unknown option: {option} (try --help)"));
         }
@@ -34,6 +49,9 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String
     };
     if args.next().is_some() {
         return Err("expected exactly one file or one option (try --help)".into());
+    }
+    if command == Command::Stdin && stdin_is_terminal {
+        return Err("stdin is a terminal; pipe or redirect UTF-8 text into mjp".into());
     }
     Ok(command)
 }
@@ -43,7 +61,7 @@ mod tests {
     use super::*;
 
     fn parse_text(args: &[&str]) -> Result<Command, String> {
-        parse(args.iter().map(OsString::from))
+        parse(args.iter().map(OsString::from), false)
     }
 
     #[test]
@@ -65,13 +83,14 @@ mod tests {
             parse_text(&["--", "--version"]),
             Ok(Command::Preview("--version".into()))
         );
+        assert_eq!(parse_text(&["--", "-"]), Ok(Command::Preview("-".into())));
     }
 
     #[test]
     fn rejects_missing_paths_and_extra_arguments() {
         for args in [
-            vec![],
             vec!["--"],
+            vec!["-", "file"],
             vec!["one", "two"],
             vec!["--help", "file"],
             vec!["--version", "file"],
@@ -93,6 +112,28 @@ mod tests {
     fn preserves_non_unicode_file_names() {
         use std::os::unix::ffi::OsStringExt;
         let path = OsString::from_vec(vec![b'.', b'/', 0xff]);
-        assert_eq!(parse([path.clone()]), Ok(Command::Preview(path)));
+        assert_eq!(parse([path.clone()], false), Ok(Command::Preview(path)));
+    }
+
+    #[test]
+    fn selects_stdin_only_for_implicit_or_explicit_stdin_input() {
+        assert_eq!(parse_text(&[]), Ok(Command::Stdin));
+        assert_eq!(parse_text(&["-"]), Ok(Command::Stdin));
+        assert_eq!(
+            parse_text(&["notes.md"]),
+            Ok(Command::Preview("notes.md".into()))
+        );
+    }
+
+    #[test]
+    fn shows_help_at_a_terminal_without_waiting_for_input() {
+        assert_eq!(parse([], true), Ok(Command::Help));
+        assert!(parse(["-".into()], true)
+            .unwrap_err()
+            .contains("stdin is a terminal"));
+        assert_eq!(
+            parse(["notes.md".into()], true),
+            Ok(Command::Preview("notes.md".into()))
+        );
     }
 }
