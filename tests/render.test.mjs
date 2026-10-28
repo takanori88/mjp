@@ -80,6 +80,20 @@ for (const text of ['# Example', 'x'.repeat(MAX_MARKDOWN_BYTES + 1)]) {
   });
 }
 
+test('notes only code blocks that contain text direction controls', () => {
+  const { article, render } = setup();
+  render(snapshot(
+    '```sh\necho ⁧a⁩\n```\n\n' +
+    '    indented ‮b\n\n' +
+    '```sh\necho mark ‏\n```\n\n' +
+    'prose ⁧c⁩\n',
+  ));
+  const blocks = [...article.querySelectorAll('pre > code')]
+    .map(code => code.closest('.code-block') ?? code.parentElement);
+  assert.deepEqual(blocks.map(block => block.previousElementSibling?.getAttribute('role') ?? null), ['note', 'note', null]);
+  assert.equal(article.querySelectorAll('[role="note"]').length, 2);
+});
+
 test('returns to formatted output when the document becomes smaller', () => {
   const { article, status, render } = setup();
   render(snapshot('x'.repeat(MAX_MARKDOWN_BYTES + 1)));
