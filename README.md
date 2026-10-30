@@ -4,7 +4,7 @@
 
 **Markdown. Just Preview.**
 
-`mjp` opens a Markdown file in a small GUI window from your terminal. It is for reading a file quickly, without opening an editor or adding editing controls. On macOS, the release CLI returns to your shell while the preview window stays open.
+`mjp` opens Markdown files in small GUI windows from your terminal or macOS Finder. It is for reading a file quickly, without opening an editor or adding editing controls. On macOS, the release CLI returns to your shell while the preview window stays open.
 
 ```sh
 mjp README.md
@@ -14,7 +14,8 @@ mjp README.md
 
 ## Features
 
-- Renders Markdown, including tables and task lists, in a single window.
+- Renders Markdown, including tables and task lists, with one preview per file.
+- Opens `.md` and `.markdown` files from macOS Finder.
 - Highlights fenced code blocks for common languages.
 - Copies fenced code blocks with a button or keyboard activation.
 - Displays local PNG, JPEG, GIF, and WebP images referenced in Markdown.
@@ -41,11 +42,22 @@ Documents up to 128 KiB are formatted as Markdown. Larger documents show their c
 
 Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app. Relative file links are not opened. Raw HTML remains plain text.
 
+### Opening files from Finder
+
+After [installing the app](#installation), select a `.md` or `.markdown` file in Finder and choose **Open With → mjp**. You can also make mjp the default app using the installation steps below, then double-click files to preview them.
+
+The app opens a separate window for each file. Opening the same file again brings its existing window to the front; duplicate requests during a load share that load. Each open request processes its first 10 selected inputs. Excess inputs and files that cannot be read appear together in one **Files that could not be opened** window, with up to 10 details and an omitted count. Correct the file or request, then open it again to retry. Files that opened successfully continue to reload after saves; a later read failure appears in that preview's error banner and clears when the file recovers.
+
+Launching `mjp.app` without a file shows a welcome window with usage instructions. It closes after a document window is successfully created. Each preview closes independently, and mjp exits after the last window closes and all accepted open requests finish. `⌘Q` or **Quit** exits the entire process, including while a file is loading.
+
+The CLI starts with one preview in its own process. Normal Finder launches are expected to deliver files to the existing app instance. Directly using the executable inside `mjp.app` as a CLI can create multiple instances; any CLI child that receives an OS open request adds windows in that same process. For terminal use, install the separate command in `~/.local/bin` as shown below.
+
 ### Keyboard shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `Esc`, `q`, `⌘W` | Close the preview on macOS. |
+| `Esc`, `q`, `⌘W` | Close the current preview on macOS. |
+| `⌘Q` | Quit all windows in this mjp process. |
 | `j`, `k` | Scroll down or up. |
 | `Ctrl+D`, `Ctrl+U` | Scroll down or up by half a window. |
 | `gg` | Jump to the top (press the two `g` keys within one second). |
@@ -59,7 +71,7 @@ Each fenced code block has a copy button; click it, or press Enter or Space whil
 
 Use Markdown image syntax, for example `![Preview](images/preview.png)`, with paths relative to the Markdown file. In a Git working tree, images may come from anywhere within the nearest repository root, such as `../images/preview.png`; otherwise they must be in the Markdown file's directory or below it. Symlinks, absolute paths, remote URLs, data URLs, and SVG are not loaded, and unavailable images show their alt text.
 
-Each image is limited to 10 MiB, and a document loads at most 64 image references and 32 MiB of distinct image data. Image files are not watched: after editing only an image, reopen the preview or change and save the Markdown text.
+Each image is limited to 10 MiB, and a document loads at most 64 image references and 32 MiB of distinct image data. Image files are not watched: after editing only an image, close and reopen the preview, or change and save the Markdown text.
 
 ### Yazi + Neovim + mjp
 
@@ -105,7 +117,16 @@ npm run build:release -- --bundles app -- --locked
 ./src-tauri/target/release/mjp README.md
 ```
 
-The built command is `mjp`. The app bundle is under `src-tauri/target/release/bundle/macos/`.
+The built command is `src-tauri/target/release/mjp`. The app bundle is `src-tauri/target/release/bundle/macos/mjp.app`.
+
+To install the Finder app:
+
+1. In Finder, copy `src-tauri/target/release/bundle/macos/mjp.app` to `/Applications`, giving `/Applications/mjp.app`.
+2. Select a `.md` file and choose **File → Get Info** (`⌘I`).
+3. Under **Open with**, select **mjp** (use **Other…** to find `/Applications/mjp.app` if needed), then click **Change All…** and confirm.
+4. Repeat for a `.markdown` file if you use that extension. Double-click a file to open its preview.
+
+To update the app, quit mjp and replace `/Applications/mjp.app` with a fresh build. Remove that bundle to uninstall the Finder app; the CLI is installed separately.
 
 To install the CLI for your user account:
 
@@ -119,7 +140,7 @@ mjp README.md
 
 Add the `export PATH` line to your shell startup file (for example, `~/.zshrc`) to keep it for new terminals. Rebuild and repeat `install` to update; remove `~/.local/bin/mjp` to uninstall. The installed command needs neither Node.js nor Rust at runtime.
 
-The `.app` contains the same command at `mjp.app/Contents/MacOS/mjp`; pass it a file from the terminal. Opening it in Finder is not a file-selection workflow. Builds made here are not Developer ID signed or notarized. Binary distribution and its installation experience are deferred.
+Use the copy in `~/.local/bin` for CLI workflows and `/Applications/mjp.app` for Finder. Builds made here are not Developer ID signed or notarized. Binary distribution and its installation experience are deferred.
 
 Use `build:release` for binaries you intend to share. It remaps the build machine's home, Cargo, Rustup, and checkout paths to generic `/build/` paths during compilation, including dependencies. Existing environment-supplied compiler flags are preserved. Direct `cargo build` or `tauri build` commands do not apply this remapping. Check the final executable before distribution because generated strings and linker output may contain other paths.
 
