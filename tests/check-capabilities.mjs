@@ -17,7 +17,7 @@ assert.equal(Boolean(capabilities['perf-capability']), perf);
 assert.equal(JSON.stringify(schema).includes('allow-perf-mark'), perf);
 if (perf) assert.deepEqual(capabilities['perf-capability'].permissions, ['allow-perf-mark']);
 for (const capability of Object.values(capabilities)) {
-  assert.deepEqual(capability.windows, ['main']);
+  assert.deepEqual(capability.windows, ['preview-*']);
   assert.ok(capability.permissions.every(permission => !permission.startsWith('opener:')));
 }
 const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));

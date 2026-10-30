@@ -114,6 +114,10 @@ Live previews of editor buffers (Issue #14 stages 3 and 4: Neovim integration an
 
 In macOS release builds, transfer the validated text through an anonymous pipe to the detached GUI child. The child reads and validates its input before initializing the window. Close the pipe after writing so EOF completes the document; return after the handoff without waiting for the window to close. Stop and reap the child if writing fails. This keeps document text out of command arguments, environment variables, and temporary files. File-based startup keeps its existing path handoff, and development builds continue in the foreground. No additional dependencies or frontend IPC commands are needed.
 
+### Documents belong to windows
+
+Every preview has a process-unique `preview-<n>` label and a registry entry containing its document and image scope. Commands resolve the caller's injected WebView label, and reload subscriptions receive only that window's events. A shared template and `preview-*` capabilities keep CLI previews on the same path as future OS-opened windows without accepting a frontend-selected document. Window creation and render performance marks carry the injected label; process startup marks remain separate.
+
 ## 4. File watching
 
 The first choice is Rust [notify](https://docs.rs/notify/latest/notify/) with `recommended_watcher`. Watch the parent directory nonrecursively, not the file itself, and handle events involving the target filename. Editors differ in whether they overwrite, delete and recreate, or replace from a temporary file. Instead of interpreting each event type strictly, reread the target after a short debounce (initially 100–200 ms) and coalesce duplicates.

@@ -1,13 +1,16 @@
 use std::{
     error::Error,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, RecvTimeoutError},
+    sync::{
+        mpsc::{self, Receiver, RecvTimeoutError},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use notify::{Event, RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 use super::Document;
 
@@ -16,15 +19,20 @@ const MAX_SETTLE_TIME: Duration = Duration::from_millis(700);
 
 type Subscription = (notify::RecommendedWatcher, Receiver<notify::Result<Event>>);
 
-pub fn start(app: AppHandle, path: PathBuf) -> Result<(), Box<dyn Error>> {
+pub fn start(
+    app: AppHandle,
+    label: String,
+    document: Arc<Document>,
+    path: PathBuf,
+) -> Result<(), Box<dyn Error>> {
     let (watcher, rx) = subscribe(&path)?;
     thread::Builder::new()
         .name("mjp-file-watch".into())
         .spawn(move || {
             let _watcher = watcher;
             process_events(&rx, &path, || {
-                if let Some(revision) = app.state::<Document>().refresh() {
-                    let _ = app.emit_to("main", "document-changed", revision);
+                if let Some(revision) = document.refresh() {
+                    let _ = app.emit_to(&label, "document-changed", revision);
                 }
             });
         })?;

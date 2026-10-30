@@ -11,7 +11,9 @@ use std::{
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
+mod documents;
 mod images;
+use documents::Documents;
 mod navigation;
 #[cfg(feature = "perf")]
 pub mod perf;
@@ -213,16 +215,21 @@ pub fn load_stdin(input: impl Read) -> Result<Document, String> {
 }
 
 #[tauri::command]
-fn get_document(document: tauri::State<'_, Document>) -> Result<Snapshot, String> {
-    document.snapshot()
+fn get_document(
+    window: tauri::WebviewWindow,
+    documents: tauri::State<'_, Documents>,
+) -> Result<Snapshot, String> {
+    documents.get(window.label())?.snapshot()
 }
 
 #[tauri::command]
 async fn get_image(
-    document: tauri::State<'_, Document>,
+    window: tauri::WebviewWindow,
+    documents: tauri::State<'_, Documents>,
     reference: String,
 ) -> Result<tauri::ipc::Response, String> {
-    let scope = document
+    let scope = documents
+        .get(window.label())?
         .images
         .clone()
         .ok_or("Local images are unavailable")?;
@@ -233,8 +240,8 @@ async fn get_image(
 }
 
 #[tauri::command]
-fn close_preview(app: tauri::AppHandle) {
-    app.exit(0);
+fn close_preview(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -253,7 +260,7 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
 
 #[cfg(feature = "perf")]
 #[tauri::command]
-fn perf_mark(stage: String, rendered_ms: f64) {
+fn perf_mark(window: tauri::WebviewWindow, stage: String, rendered_ms: f64) {
     if matches!(
         stage.as_str(),
         "document_received"
@@ -263,19 +270,16 @@ fn perf_mark(stage: String, rendered_ms: f64) {
             | "first_render"
             | "reload_render"
     ) {
-        perf::mark(&stage, (rendered_ms * 1000.0) as u128);
+        perf::mark_window(window.label(), &stage, (rendered_ms * 1000.0) as u128);
     }
 }
 
 pub fn run(document: Document) -> tauri::Result<()> {
-    let title = document.title();
-    let watched_path = document.path.clone();
-
     #[cfg(feature = "perf")]
     perf::mark_now("gui_run");
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(document);
+        .manage(Documents::default());
     #[cfg(feature = "perf")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         get_document,
@@ -293,21 +297,29 @@ pub fn run(document: Document) -> tauri::Result<()> {
     ]);
     builder
         .setup(move |app| {
-            if let Some(path) = watched_path {
-                if let Err(error) = watch::start(app.handle().clone(), path) {
-                    app.state::<Document>()
-                        .set_warning(format!("Live reload is unavailable: {error}"));
+            let title = document.title();
+            let document = Arc::new(document);
+            let label = app.state::<Documents>().insert(Arc::clone(&document));
+            if let Some(path) = document.path.clone() {
+                if let Err(error) = watch::start(
+                    app.handle().clone(),
+                    label.clone(),
+                    Arc::clone(&document),
+                    path,
+                ) {
+                    document.set_warning(format!("Live reload is unavailable: {error}"));
                 }
             }
             let dev_url = app.config().build.dev_url.clone();
-            let window =
-                tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
-                    .title(format!("{title} — mjp"))
-                    .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
-                    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                    .build()?;
+            let mut config = app.config().app.windows[0].clone();
+            config.label = label;
+            let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+                .title(format!("{title} — mjp"))
+                .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
+                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                .build()?;
             #[cfg(feature = "perf")]
-            perf::mark_now("window_created");
+            perf::mark_window_now(window.label(), "window_created");
             window.set_focus()?;
             Ok(())
         })
