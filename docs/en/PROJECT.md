@@ -227,7 +227,7 @@ git show HEAD:README.md | mjp
 mjp -
 ```
 
-The theme override remains a future idea. Standard input is read once to EOF; live streaming and editor integration remain future work. See [README.md](../../README.md) for current limits and behavior.
+The theme override remains a future idea. Standard input is read once to EOF. See [README.md](../../README.md) for current limits and behavior.
 
 ## 13. Cross-platform scope
 
