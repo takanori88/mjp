@@ -132,6 +132,15 @@ Canonical paths identify open documents and in-flight reservations. An open docu
 
 Accepted requests remain pending while queued before Ready, while loading, and until their windows or guidance have been created. Draining the queue does not complete a request. The startup Welcome decision also prevents premature natural exit. Welcome has an explicit kind and is replaced only after a document window is successfully created, never when a read merely starts or fails.
 
+
+### Finder startup and process lifetime
+
+LaunchServices supplies `MJP_APP=1` through the bundle's merged `Info.plist`. It is a startup hint, not an authority boundary. A GUI child takes priority, followed by explicit CLI arguments, then the no-argument app hint, then the existing terminal-help or stdin behavior. Detached CLI children remove the app hint. The bundle declares `.md` and `.markdown` as a Viewer of `net.daringfireball.markdown` with Alternate rank and does not export that type.
+
+The app builds Tauri before running its event callback. Before Ready it only queues OS requests; workers canonicalize and read files, and the main thread reserves paths, registers results, creates windows, and decides when to exit. No registry/request lock spans I/O, a window operation, a main-thread dispatch, an await, or a watcher join. With no queued files, app startup shows Welcome; Reopen with no visible windows shows Welcome again while the process is still alive. Cmd+W and the close button close one window, while the native Cmd+Q/Quit action exits the process even during a load.
+
+A LaunchServices app instance opens separate windows for documents, matching macOS file-open delivery without a dispatcher and child processes. Ordinary LaunchServices launches are expected to deliver to an existing instance; directly running the executable inside the bundle as a CLI can create multiple instances. A CLI child therefore also handles OS open events by adding windows. CLI invocations remain independent and do not forward to an app or introduce a resident coordinator. Replacing the current document was rejected because opening another file should not discard a preview being read.
+
 ## 4. File watching
 
 The first choice is Rust [notify](https://docs.rs/notify/latest/notify/) with `recommended_watcher`. Watch the parent directory nonrecursively, not the file itself, and handle events involving the target filename. Editors differ in whether they overwrite, delete and recreate, or replace from a temporary file. Instead of interpreting each event type strictly, reread the target after a short debounce (initially 100–200 ms) and coalesce duplicates.

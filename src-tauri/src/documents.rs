@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{watch::WatchHandle, Document};
+use crate::{open_requests::WindowKind, watch::WatchHandle, Document};
 
 #[derive(Default)]
 pub(crate) struct Documents(Mutex<Registry>);
@@ -15,12 +15,13 @@ struct Registry {
 }
 
 struct Entry {
+    kind: WindowKind,
     document: Arc<Document>,
     watcher: Option<WatchHandle>,
 }
 
 impl Documents {
-    pub fn insert(&self, document: Arc<Document>) -> String {
+    pub fn insert(&self, document: Arc<Document>, kind: WindowKind) -> String {
         let mut registry = self.0.lock().expect("document registry poisoned");
         let label = format!("preview-{}", registry.next_label);
         registry.next_label = registry
@@ -30,11 +31,28 @@ impl Documents {
         registry.entries.insert(
             label.clone(),
             Entry {
+                kind,
                 document,
                 watcher: None,
             },
         );
         label
+    }
+
+    pub fn create<E>(
+        &self,
+        document: Arc<Document>,
+        kind: WindowKind,
+        build: impl FnOnce(&str) -> Result<(), E>,
+    ) -> Result<String, E> {
+        let label = self.insert(document, kind);
+        match build(&label) {
+            Ok(()) => Ok(label),
+            Err(error) => {
+                self.remove(&label);
+                Err(error)
+            }
+        }
     }
 
     pub fn get(&self, label: &str) -> Result<Arc<Document>, String> {
@@ -46,10 +64,23 @@ impl Documents {
             .map(|entry| Arc::clone(&entry.document))
             .ok_or_else(|| "document is unavailable".into())
     }
+    pub fn labels(&self, kind: WindowKind) -> Vec<String> {
+        self.0
+            .lock()
+            .expect("document registry poisoned")
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.kind == kind)
+            .map(|(label, _)| label.clone())
+            .collect()
+    }
+
     pub fn attach_watcher(&self, label: &str, watcher: WatchHandle) {
         let mut registry = self.0.lock().expect("document registry poisoned");
         if let Some(entry) = registry.entries.get_mut(label) {
-            entry.watcher = Some(watcher);
+            let previous = entry.watcher.replace(watcher);
+            drop(registry);
+            drop(previous);
             return;
         }
         drop(registry);
@@ -87,8 +118,8 @@ mod tests {
         let documents = Documents::default();
         let first = Arc::new(crate::load_stdin("first".as_bytes()).unwrap());
         let second = Arc::new(crate::load_stdin("second".as_bytes()).unwrap());
-        let a = documents.insert(Arc::clone(&first));
-        let b = documents.insert(Arc::clone(&second));
+        let a = documents.insert(Arc::clone(&first), WindowKind::Document);
+        let b = documents.insert(Arc::clone(&second), WindowKind::Document);
         assert_ne!(a, b);
         assert!(Arc::ptr_eq(&documents.get(&a).unwrap(), &first));
         assert!(Arc::ptr_eq(&documents.get(&b).unwrap(), &second));
@@ -107,7 +138,7 @@ mod tests {
             let bytes = [b"\x89PNG\r\n\x1a\n".as_slice(), name.as_bytes()].concat();
             std::fs::write(dir.join("image.png"), bytes).unwrap();
             let document = crate::load_document([dir.join("note.md").into_os_string()]).unwrap();
-            labels.push(documents.insert(Arc::new(document)));
+            labels.push(documents.insert(Arc::new(document), WindowKind::Document));
         }
         for (label, name) in labels.iter().zip(["a", "b"]) {
             let document = documents.get(label).unwrap();
@@ -127,8 +158,11 @@ mod tests {
         let documents = Documents::default();
         let document = Arc::new(crate::load_stdin(b"a".as_slice()).unwrap());
         let weak = Arc::downgrade(&document);
-        let a = documents.insert(document);
-        let b = documents.insert(Arc::new(crate::load_stdin(b"b".as_slice()).unwrap()));
+        let a = documents.insert(document, WindowKind::Document);
+        let b = documents.insert(
+            Arc::new(crate::load_stdin(b"b".as_slice()).unwrap()),
+            WindowKind::Document,
+        );
         documents.remove(&a);
         assert!(weak.upgrade().is_none());
         assert!(documents.get(&a).is_err());
@@ -137,8 +171,45 @@ mod tests {
         documents.remove(&b);
         assert!(documents.can_exit(false));
         assert!(!documents.can_exit(true));
-        let c = documents.insert(Arc::new(crate::load_stdin(b"c".as_slice()).unwrap()));
+        let c = documents.insert(
+            Arc::new(crate::load_stdin(b"c".as_slice()).unwrap()),
+            WindowKind::Document,
+        );
         assert_ne!(c, a);
         assert_ne!(c, b);
+    }
+    #[test]
+    fn a_failed_build_unregisters_the_document_after_making_it_available_to_invokes() {
+        let documents = Documents::default();
+        let document = Arc::new(crate::load_stdin(b"a".as_slice()).unwrap());
+        let weak = Arc::downgrade(&document);
+        let mut attempted = String::new();
+        let result = documents.create(document, WindowKind::Document, |label| {
+            attempted = label.into();
+            assert_eq!(documents.get(label).unwrap().snapshot().unwrap().text, "a");
+            Err("build failed")
+        });
+        assert_eq!(result, Err("build failed"));
+        assert!(documents.get(&attempted).is_err());
+        assert!(weak.upgrade().is_none());
+        assert!(documents.can_exit(false));
+    }
+
+    #[test]
+    fn welcome_is_identified_by_kind_instead_of_text_or_path() {
+        let documents = Documents::default();
+        let welcome = documents.insert(
+            Arc::new(crate::load_stdin(b"same".as_slice()).unwrap()),
+            WindowKind::Welcome,
+        );
+        documents.insert(
+            Arc::new(crate::load_stdin(b"same".as_slice()).unwrap()),
+            WindowKind::Failures,
+        );
+        documents.insert(
+            Arc::new(crate::load_stdin(b"same".as_slice()).unwrap()),
+            WindowKind::Document,
+        );
+        assert_eq!(documents.labels(WindowKind::Welcome), vec![welcome]);
     }
 }

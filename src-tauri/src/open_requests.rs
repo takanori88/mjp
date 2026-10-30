@@ -42,6 +42,7 @@ pub enum OpenDecision {
 pub struct Requests {
     ready: bool,
     startup_pending: bool,
+    welcome_requested: bool,
     pending: usize,
     queued: Vec<Vec<Url>>,
     loading: HashSet<PathBuf>,
@@ -53,6 +54,7 @@ impl Default for Requests {
         Self {
             ready: false,
             startup_pending: true,
+            welcome_requested: false,
             pending: 0,
             queued: Vec::new(),
             loading: HashSet::new(),
@@ -63,6 +65,9 @@ impl Default for Requests {
 
 impl Requests {
     pub fn accept(&mut self, urls: Vec<Url>) -> Option<Vec<Url>> {
+        if urls.is_empty() {
+            return None;
+        }
         self.begin();
         if self.ready {
             Some(urls)
@@ -75,6 +80,15 @@ impl Requests {
     pub fn ready(&mut self) -> Vec<Vec<Url>> {
         self.ready = true;
         std::mem::take(&mut self.queued)
+    }
+
+    pub fn request_welcome(&mut self) -> bool {
+        self.welcome_requested = true;
+        self.ready
+    }
+
+    pub fn take_welcome_request(&mut self) -> bool {
+        std::mem::take(&mut self.welcome_requested)
     }
 
     pub fn finish_startup(&mut self) {
@@ -93,7 +107,7 @@ impl Requests {
     }
 
     pub fn has_pending(&self) -> bool {
-        !self.ready || self.startup_pending || self.pending != 0
+        !self.ready || self.startup_pending || self.welcome_requested || self.pending != 0
     }
 
     pub fn prevents_exit(&self, code: Option<i32>, has_windows: bool) -> bool {
@@ -344,5 +358,27 @@ mod tests {
     fn os_open_errors_use_gui_even_when_received_by_a_cli_child() {
         assert!(Origin::OsOpen.reports_in_gui());
         assert!(!Origin::CliInitial.reports_in_gui());
+    }
+    #[test]
+    fn reopen_before_ready_waits_for_startup_and_reopen_after_ready_stays_pending() {
+        let mut requests = Requests::default();
+        assert!(!requests.request_welcome());
+        requests.ready();
+        assert!(requests.take_welcome_request());
+        assert!(!requests.take_welcome_request());
+        requests.finish_startup();
+        assert!(!requests.has_pending());
+        assert!(requests.request_welcome());
+        assert!(requests.has_pending());
+        assert!(requests.take_welcome_request());
+        assert!(!requests.has_pending());
+    }
+    #[test]
+    fn empty_open_events_leave_the_fileless_startup_decision_available() {
+        let mut requests = Requests::default();
+        assert!(requests.accept(Vec::new()).is_none());
+        assert!(requests.ready().is_empty());
+        requests.finish_startup();
+        assert!(!requests.has_pending());
     }
 }

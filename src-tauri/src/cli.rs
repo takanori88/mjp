@@ -18,6 +18,23 @@ Options:
   -V, --version  Show the version";
 
 #[derive(Debug, PartialEq)]
+pub enum StartupMode {
+    GuiChild,
+    Cli,
+    App,
+}
+
+pub fn startup_mode(gui_child: bool, has_args: bool, app_hint: bool) -> StartupMode {
+    if gui_child {
+        StartupMode::GuiChild
+    } else if has_args || !app_hint {
+        StartupMode::Cli
+    } else {
+        StartupMode::App
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Command {
     Preview(OsString),
     Stdin,
@@ -135,5 +152,20 @@ mod tests {
             parse(["notes.md".into()], true),
             Ok(Command::Preview("notes.md".into()))
         );
+    }
+    #[test]
+    fn startup_prioritizes_the_gui_child_then_arguments_then_the_app_hint() {
+        for (child, arguments, app, expected) in [
+            (true, true, true, StartupMode::GuiChild),
+            (true, false, true, StartupMode::GuiChild),
+            (true, true, false, StartupMode::GuiChild),
+            (true, false, false, StartupMode::GuiChild),
+            (false, true, true, StartupMode::Cli),
+            (false, true, false, StartupMode::Cli),
+            (false, false, true, StartupMode::App),
+            (false, false, false, StartupMode::Cli),
+        ] {
+            assert_eq!(startup_mode(child, arguments, app), expected);
+        }
     }
 }

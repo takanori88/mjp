@@ -337,4 +337,53 @@ mod tests {
             .send(Message::Event(Ok(Event::new(notify::EventKind::Any))))
             .is_err());
     }
+    #[test]
+    fn closing_one_watcher_keeps_the_other_documents_updates_independent() {
+        let root =
+            std::env::temp_dir().join(format!("mjp-watch-independent-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut handles = Vec::new();
+        let mut senders = Vec::new();
+        let mut documents = Vec::new();
+        let (updates, received) = mpsc::channel();
+        for name in ["a", "b"] {
+            let path = root.join(format!("{name}.md"));
+            fs::write(&path, name).unwrap();
+            let document = Arc::new(crate::load_document([path.clone().into_os_string()]).unwrap());
+            documents.push(Arc::clone(&document));
+            let (sender, events) = mpsc::channel();
+            senders.push(sender.clone());
+            let updates = updates.clone();
+            handles.push(
+                start_worker(None, sender, events, path, move || {
+                    if let Some(revision) = document.refresh() {
+                        updates.send((name, revision)).unwrap();
+                    }
+                })
+                .unwrap(),
+            );
+        }
+        fs::write(root.join("a.md"), "saved a").unwrap();
+        senders[0]
+            .send(Message::Event(Ok(Event::new(notify::EventKind::Any))))
+            .unwrap();
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            ("a", 1)
+        );
+        assert_eq!(documents[1].snapshot().unwrap().text, "b");
+        drop(handles.remove(0));
+        fs::write(root.join("b.md"), "saved b").unwrap();
+        senders[1]
+            .send(Message::Event(Ok(Event::new(notify::EventKind::Any))))
+            .unwrap();
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            ("b", 1)
+        );
+        assert_eq!(documents[0].snapshot().unwrap().text, "saved a");
+        assert_eq!(documents[1].snapshot().unwrap().text, "saved b");
+        drop(handles);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

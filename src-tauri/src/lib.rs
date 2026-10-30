@@ -8,17 +8,16 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 mod documents;
 mod images;
 use documents::Documents;
 mod navigation;
-#[cfg(test)]
 mod open_requests;
 #[cfg(feature = "perf")]
 pub mod perf;
+mod session;
 mod watch;
 
 const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
@@ -276,74 +275,12 @@ fn perf_mark(window: tauri::WebviewWindow, stage: String, rendered_ms: f64) {
     }
 }
 
-fn create_preview(app: &tauri::AppHandle, document: Document) -> tauri::Result<String> {
-    let title = document.title();
-    let document = Arc::new(document);
-    let documents = app.state::<Documents>();
-    let label = documents.insert(Arc::clone(&document));
-    if let Some(path) = document.path.clone() {
-        match watch::start(app.clone(), label.clone(), Arc::clone(&document), path) {
-            Ok(watcher) => documents.attach_watcher(&label, watcher),
-            Err(error) => document.set_warning(format!("Live reload is unavailable: {error}")),
-        }
-    }
-    let result = (|| {
-        let dev_url = app.config().build.dev_url.clone();
-        let mut config = app.config().app.windows[0].clone();
-        config.label = label.clone();
-        let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
-            .title(format!("{title} — mjp"))
-            .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
-            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-            .build()?;
-        #[cfg(feature = "perf")]
-        perf::mark_window_now(window.label(), "window_created");
-        let _ = window.set_focus();
-        Ok(label.clone())
-    })();
-    if result.is_err() {
-        documents.remove(&label);
-    }
-    result
+pub fn run(document: Document) -> tauri::Result<()> {
+    session::run(Some(document))
 }
 
-pub fn run(document: Document) -> tauri::Result<()> {
-    #[cfg(feature = "perf")]
-    perf::mark_now("gui_run");
-    let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .manage(Documents::default());
-    #[cfg(feature = "perf")]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        get_document,
-        get_image,
-        close_preview,
-        open_external,
-        perf_mark
-    ]);
-    #[cfg(not(feature = "perf"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        get_document,
-        get_image,
-        close_preview,
-        open_external
-    ]);
-    builder
-        .setup(move |app| {
-            create_preview(app.handle(), document)?;
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                let app = window.app_handle();
-                let documents = app.state::<Documents>();
-                documents.remove(window.label());
-                if documents.can_exit(false) {
-                    app.exit(0);
-                }
-            }
-        })
-        .run(tauri::generate_context!())
+pub fn run_app() -> tauri::Result<()> {
+    session::run(None)
 }
 
 #[cfg(test)]
