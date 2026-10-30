@@ -123,6 +123,15 @@ Registry entries own stoppable watcher handles, while workers retain only their 
 
 Closing one window leaves the others running. Natural exit requires both an empty registry and no unfinished open requests; explicit Quit exits the whole process. Exiting after the last preview is mjp's lightweight reading-session choice, unlike document apps that remain alive with no windows.
 
+
+### Open-request policy
+
+Treat the request origin separately from the process startup mode: initial CLI failures go to the terminal, while OS-open failures use one guidance window per event, including in a CLI child. Validate local file URLs and reject queries, fragments, and unconvertible paths. Process the first ten inputs of each event and report excess inputs together with read failures; ten is an event-level UX policy, not a total-window limit. Limit guidance to ten details and report the omitted count. Escape line breaks and controls visibly and choose a code fence longer than any backtick run so names remain literal, one entry per line.
+
+Canonical paths identify open documents and in-flight reservations. An open document is focused; an in-flight duplicate shares the existing load. Failed loads or window builds release reservations and never become open documents, so correcting the file and requesting it again retries naturally. Initial failures have no watcher; live-reload failures of successfully opened files continue to use the existing recoverable banner.
+
+Accepted requests remain pending while queued before Ready, while loading, and until their windows or guidance have been created. Draining the queue does not complete a request. The startup Welcome decision also prevents premature natural exit. Welcome has an explicit kind and is replaced only after a document window is successfully created, never when a read merely starts or fails.
+
 ## 4. File watching
 
 The first choice is Rust [notify](https://docs.rs/notify/latest/notify/) with `recommended_watcher`. Watch the parent directory nonrecursively, not the file itself, and handle events involving the target filename. Editors differ in whether they overwrite, delete and recreate, or replace from a temporary file. Instead of interpreting each event type strictly, reread the target after a short debounce (initially 100–200 ms) and coalesce duplicates.

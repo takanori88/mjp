@@ -15,6 +15,8 @@ mod documents;
 mod images;
 use documents::Documents;
 mod navigation;
+#[cfg(test)]
+mod open_requests;
 #[cfg(feature = "perf")]
 pub mod perf;
 mod watch;
