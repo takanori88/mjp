@@ -1,6 +1,6 @@
 {
   "$schema": "../../gen/schemas/desktop-schema.json",
   "identifier": "perf-capability",
-  "windows": ["main"],
+  "windows": ["preview-*"],
   "permissions": ["allow-perf-mark"]
 }

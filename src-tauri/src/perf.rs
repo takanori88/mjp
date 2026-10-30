@@ -17,3 +17,13 @@ pub fn mark(label: &str, epoch_us: u128) {
         }
     }
 }
+
+pub fn mark_window_now(window: &str, stage: &str) {
+    if let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) {
+        mark_window(window, stage, duration.as_micros());
+    }
+}
+
+pub fn mark_window(window: &str, stage: &str, epoch_us: u128) {
+    mark(&format!("{window}:{stage}"), epoch_us);
+}

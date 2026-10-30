@@ -96,6 +96,8 @@ Opening a GUI app and selecting a file is not the main workflow. The interface i
 mjp <file>
 ```
 
+The macOS app also accepts Finder file-open requests. Each document gets its own window in the receiving process. CLI invocations remain independent and start with one preview; a CLI child can add windows if it later receives OS requests. This extends quick viewing without adding a file picker, tabs, or document management. See [PLAN.md](PLAN.md) for the lifetime rules and [README.md](../../README.md) for installation.
+
 ## 5. Minimum viable product
 
 Phase 1 focuses on the following behavior.
@@ -143,7 +145,7 @@ Editor → save → README.md → file change → mjp → automatic rerender
 
 ### Close
 
-The Phase 1 plan called for `Esc` and macOS `Cmd+W`, as well as the normal window close action. `Ctrl+W` was a future Windows/Linux consideration, not a current shortcut.
+The Phase 1 plan called for `Esc` and macOS `Cmd+W`, as well as the normal window close action. These now close the current preview. The process exits when no windows or unfinished open requests remain; macOS `Cmd+Q` quits the entire process. `Ctrl+W` was a future Windows/Linux consideration, not a current shortcut.
 
 ### Scrolling
 

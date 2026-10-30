@@ -8,13 +8,16 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
+mod documents;
 mod images;
+use documents::Documents;
 mod navigation;
+mod open_requests;
 #[cfg(feature = "perf")]
 pub mod perf;
+mod session;
 mod watch;
 
 const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
@@ -164,19 +167,37 @@ pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Documen
         return Err("empty file path".into());
     }
 
-    let label = path.display();
-    let text = read_markdown(&path).map_err(|error| match error {
-        ReadError::Access(error) if error.kind() == io::ErrorKind::NotFound => {
-            format!("{label}: file not found")
-        }
-        ReadError::Access(error) => format!("{label}: cannot access file: {error}"),
-        ReadError::NotRegular => format!("{label}: not a regular file"),
-        ReadError::TooLarge => format!("{label}: file is too large (max 10 MiB)"),
-        ReadError::InvalidUtf8 => format!("{label}: file is not valid UTF-8"),
-        ReadError::Read(error) => format!("{label}: cannot read file: {error}"),
+    load_document_path(&path).map_err(|error| error.to_string())
+}
+
+#[derive(Debug)]
+struct DocumentLoadError {
+    path: PathBuf,
+    reason: String,
+}
+
+impl fmt::Display for DocumentLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.path.display(), self.reason)
+    }
+}
+
+fn load_document_path(path: &Path) -> Result<Document, DocumentLoadError> {
+    let text = read_markdown(path).map_err(|error| DocumentLoadError {
+        path: path.to_path_buf(),
+        reason: match error {
+            ReadError::Access(error) if error.kind() == io::ErrorKind::NotFound => {
+                "file not found".into()
+            }
+            ReadError::Access(error) => format!("cannot access file: {error}"),
+            ReadError::Read(error) => format!("cannot read file: {error}"),
+            error => error.to_string(),
+        },
     })?;
-    let path = fs::canonicalize(&path)
-        .map_err(|error| format!("{label}: cannot resolve file path: {error}"))?;
+    let path = fs::canonicalize(path).map_err(|error| DocumentLoadError {
+        path: path.to_path_buf(),
+        reason: format!("cannot resolve file path: {error}"),
+    })?;
 
     Ok(Document {
         images: images::ImageScope::new(&path).ok().map(Arc::new),
@@ -213,16 +234,21 @@ pub fn load_stdin(input: impl Read) -> Result<Document, String> {
 }
 
 #[tauri::command]
-fn get_document(document: tauri::State<'_, Document>) -> Result<Snapshot, String> {
-    document.snapshot()
+fn get_document(
+    window: tauri::WebviewWindow,
+    documents: tauri::State<'_, Documents>,
+) -> Result<Snapshot, String> {
+    documents.get(window.label())?.snapshot()
 }
 
 #[tauri::command]
 async fn get_image(
-    document: tauri::State<'_, Document>,
+    window: tauri::WebviewWindow,
+    documents: tauri::State<'_, Documents>,
     reference: String,
 ) -> Result<tauri::ipc::Response, String> {
-    let scope = document
+    let scope = documents
+        .get(window.label())?
         .images
         .clone()
         .ok_or("Local images are unavailable")?;
@@ -233,8 +259,8 @@ async fn get_image(
 }
 
 #[tauri::command]
-fn close_preview(app: tauri::AppHandle) {
-    app.exit(0);
+fn close_preview(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -253,7 +279,7 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
 
 #[cfg(feature = "perf")]
 #[tauri::command]
-fn perf_mark(stage: String, rendered_ms: f64) {
+fn perf_mark(window: tauri::WebviewWindow, stage: String, rendered_ms: f64) {
     if matches!(
         stage.as_str(),
         "document_received"
@@ -263,60 +289,16 @@ fn perf_mark(stage: String, rendered_ms: f64) {
             | "first_render"
             | "reload_render"
     ) {
-        perf::mark(&stage, (rendered_ms * 1000.0) as u128);
+        perf::mark_window(window.label(), &stage, (rendered_ms * 1000.0) as u128);
     }
 }
 
 pub fn run(document: Document) -> tauri::Result<()> {
-    let title = document.title();
-    let watched_path = document.path.clone();
+    session::run(Some(document))
+}
 
-    #[cfg(feature = "perf")]
-    perf::mark_now("gui_run");
-    let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .manage(document);
-    #[cfg(feature = "perf")]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        get_document,
-        get_image,
-        close_preview,
-        open_external,
-        perf_mark
-    ]);
-    #[cfg(not(feature = "perf"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        get_document,
-        get_image,
-        close_preview,
-        open_external
-    ]);
-    builder
-        .setup(move |app| {
-            if let Some(path) = watched_path {
-                if let Err(error) = watch::start(app.handle().clone(), path) {
-                    app.state::<Document>()
-                        .set_warning(format!("Live reload is unavailable: {error}"));
-                }
-            }
-            let dev_url = app.config().build.dev_url.clone();
-            let window =
-                tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
-                    .title(format!("{title} — mjp"))
-                    .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
-                    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                    .build()?;
-            #[cfg(feature = "perf")]
-            perf::mark_now("window_created");
-            window.set_focus()?;
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                window.app_handle().exit(0);
-            }
-        })
-        .run(tauri::generate_context!())
+pub fn run_app() -> tauri::Result<()> {
+    session::run(None)
 }
 
 #[cfg(test)]

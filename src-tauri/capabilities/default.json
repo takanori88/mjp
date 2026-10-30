@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
-  "windows": ["main"],
+  "windows": ["preview-*"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",

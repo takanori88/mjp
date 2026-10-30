@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { startPreview } from "./preview.ts";
 import "./style.css";
 
@@ -9,7 +9,7 @@ await startPreview(
   {
     getDocument: () => invoke("get_document"),
     getImage: reference => invoke<ArrayBuffer>("get_image", { reference }),
-    subscribe: changed => listen("document-changed", () => { void changed(); }),
+    subscribe: changed => getCurrentWebviewWindow().listen("document-changed", () => { void changed(); }),
     close: () => invoke("close_preview"),
     openExternal: url => invoke("open_external", { url }),
     writeText: text => navigator.clipboard.writeText(text),

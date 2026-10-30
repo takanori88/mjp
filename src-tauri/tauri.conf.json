@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "label": "main",
+        "label": "preview-template",
         "title": "mjp",
         "width": 800,
         "height": 600,
@@ -27,6 +27,15 @@
   },
   "bundle": {
     "active": true,
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown document",
+        "role": "Viewer",
+        "contentTypes": ["net.daringfireball.markdown"],
+        "rank": "Alternate"
+      }
+    ],
     "icon": [],
     "macOS": {
       "minimumSystemVersion": "11.0"

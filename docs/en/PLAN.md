@@ -10,7 +10,7 @@ On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Previ
 
 ## 1. Requirements and completion criteria
 
-`mjp <file>` opens one Markdown file, returns the shell prompt without waiting for the GUI, and closes immediately on `Esc`. Phase 1 has no editor or file management features.
+`mjp <file>` opens one Markdown file, returns the shell prompt without waiting for the GUI, and closes that preview immediately on `Esc`. Phase 1 has no editor or file management features.
 
 | Area | Phase 1 requirement |
 | --- | --- |
@@ -19,10 +19,10 @@ On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Previ
 | Code | Highlight fenced code in common languages. Render unknown languages as escaped plain text. |
 | Appearance | Follow the OS light/dark setting. Prioritize readable content width, line spacing, heading hierarchy, code, and tables. Do not add a toolbar, sidebar, tabs, or settings UI. |
 | Reload | Detect saves and redraw automatically. Show a small in-window error if the file is deleted or cannot be read, then recover when it returns. Preserve scroll position if practical. |
-| Close | Exit the window and process on `Esc`, macOS `Cmd+W`, or the normal window close action. Consider `Ctrl+W` when Windows/Linux support is implemented. |
+| Close | Close the current window on `Esc`, macOS `Cmd+W`, or the normal window close action. Exit when no windows or unfinished open requests remain; macOS `Cmd+Q` quits the whole process. Consider `Ctrl+W` when Windows/Linux support is implemented. |
 | Performance | Measure startup time. Set a formal threshold after initial measurements on the target machine, and prioritize performance improvements over added features. |
 
-The exclusions in [PROJECT.md](PROJECT.md), sections 6, 7, 12, and 14, still apply. Mermaid, KaTeX, multiple files, and automated distribution remain later-stage work. One-shot standard input is now supported as described below. Images were not part of the initial minimum display requirements. Local raster images are now supported for Markdown reading sessions, as described below; remote images and raw HTML remain outside the scope.
+The exclusions in [PROJECT.md](PROJECT.md), sections 6, 7, 12, and 14, still apply. Mermaid, KaTeX, multiple CLI file arguments, and automated distribution remain later-stage work. Finder requests now support separate previews for multiple files as described below. One-shot standard input is now supported as described below. Images were not part of the initial minimum display requirements. Local raster images are now supported for Markdown reading sessions, as described below; remote images and raw HTML remain outside the scope.
 
 A later UX decision added a small set of Vim-style keys so reading and closing can stay keyboard-only. It does not introduce editing modes or mode management.
 
@@ -30,11 +30,11 @@ A later UX decision added a small set of Vim-style keys so reading and closing c
 
 ### Tauri 2
 
-- Tauri 2 combines a Rust application with the OS WebView. A macOS `.app` stores its executable under `Contents/MacOS`, so a future installer could expose that executable as the `mjp` command. During development, test the generated executable directly. Sources: [Tauri architecture](https://v2.tauri.app/concept/architecture/), [macOS application bundle](https://v2.tauri.app/distribute/macos-application-bundle/).
+- Tauri 2 combines a Rust application with the OS WebView. A macOS `.app` stores its executable under `Contents/MacOS`, while the documented CLI installation copies the standalone executable to `~/.local/bin`. During development, test the generated executable directly. Sources: [Tauri architecture](https://v2.tauri.app/concept/architecture/), [macOS application bundle](https://v2.tauri.app/distribute/macos-application-bundle/).
 - The Tauri CLI plugin accepts positional arguments, but a single path can be handled by Rust `std::env::args_os` without another plugin or JS argument handling. `OsString` also preserves OS paths that are not UTF-8. Decide whether `--help` and `--version` belong in this minimal CLI during implementation. Source: [CLI plugin](https://v2.tauri.app/plugin/cli/).
 - The configured window can use `create: false` and be created from Rust only after validating the file. This prevents an empty window on a CLI error. Source: [Tauri configuration](https://v2.tauri.app/reference/config/).
 - Use events to notify the frontend of changes and a narrow command to fetch document content. Keep file reading in Rust. Source: [calling Rust from the frontend](https://v2.tauri.app/develop/calling-rust/).
-- Declare app commands in the build manifest and grant the main window the four commands it uses. The `perf` feature additionally selects the measurement command and its capability from a separate subdirectory. Normal builds exclude that capability and remove the generated measurement permission left by an earlier feature build, so switching build modes in one checkout is repeatable. The Rust opener wrapper remains the only link-opening interface exposed to the frontend.
+- Declare app commands in the build manifest and grant each `preview-*` window the four commands it uses. The `perf` feature additionally selects the measurement command and its capability from a separate subdirectory. Normal builds exclude that capability and remove the generated measurement permission left by an earlier feature build, so switching build modes in one checkout is repeatable. The Rust opener wrapper remains the only link-opening interface exposed to the frontend.
 - Debug navigation uses the origin from `build.devUrl`, so changing the development server address requires no matching Rust edit. That allowance is compiled only with debug assertions; packaged-page navigation is unchanged.
 - Restrict WebView permissions through capabilities. CSP is not active unless configured. Do not give the frontend general filesystem or shell plugin access. Sources: [capabilities](https://v2.tauri.app/security/capabilities/), [CSP](https://v2.tauri.app/security/csp/).
 
@@ -76,7 +76,7 @@ Keep image syntax in Markdown while leaving raw HTML disabled. The parser emits 
 
 The image scope is the nearest ancestor containing a `.git` marker, or the Markdown file's containing directory when there is no marker. This lets translated documents share repository images through parent-relative paths without making arbitrary absolute paths available. On Unix, retain an open scope directory and walk normalized relative components with `openat` and `O_NOFOLLOW`; directory components must be directories, and the opened leaf must be a regular file. Symlinks are not accepted, including ones inside the scope. Other platforms need an equivalent scoped-open implementation before local images are enabled.
 
-Read each image with the existing 10 MiB file-size ceiling, including a bounded read for files that grow. Fetch images sequentially after text rendering, reuse Blob URLs for repeated sources, and revoke them on document replacement or page exit. Ignore old results after replacement. Allow at most 64 image occurrences and 32 MiB of distinct encoded image bytes per rendering; stop fetching new sources when the aggregate limit is reached. These are transfer and retention limits, not a bound on image decoding time or expanded pixel memory. Image-only saves are not watched in this first implementation; reopening the preview or changing the Markdown text reloads images. Images do not load in the large-document plain-text mode.
+Read each image with the existing 10 MiB file-size ceiling, including a bounded read for files that grow. Fetch images sequentially after text rendering, reuse Blob URLs for repeated sources, and revoke them on document replacement or page exit. Ignore old results after replacement. Allow at most 64 image occurrences and 32 MiB of distinct encoded image bytes per rendering; stop fetching new sources when the aggregate limit is reached. These are transfer and retention limits, not a bound on image decoding time or expanded pixel memory. Image-only saves are not watched in this first implementation; closing and reopening the preview or changing the Markdown text reloads images. Images do not load in the large-document plain-text mode.
 
 ### Alternative architecture
 
@@ -87,7 +87,7 @@ SwiftUI plus WKWebView might yield an even smaller macOS-only design, but would 
 ```text
 terminal: mjp README.md
   └─ Rust CLI: validate arguments → resolve path → validate UTF-8 → spawn GUI → return
-       ├─ GUI process: create one Tauri window only after validation
+       ├─ GUI process: create its initial Tauri window only after validation
        ├─ watch the parent directory
        └─ read command + change event
             └─ Vanilla TypeScript: Markdown parser → sanitize HTML → update DOM
@@ -95,11 +95,11 @@ terminal: mjp README.md
                  └─ CSS: follow OS appearance
 ```
 
-- On macOS release builds, the CLI starts the same executable as a detached GUI child using the validated absolute path, then exits. The GUI remains until its window is closed. `tauri dev` stays in the foreground to keep the development server running. There is no daemon, localhost server, sidecar, or single-instance plugin. Two invocations create independent previews. Design and test Windows/Linux startup separately during porting.
-- On initial load, the WebView subscribes to change events before fetching the text. If an event overlaps a read, reread once to avoid missing a save. Events request a reread rather than carrying the entire document.
+- On macOS release builds, the CLI starts the same executable as a detached GUI child using the validated absolute path, then exits. The GUI remains while it has windows or unfinished open requests. `tauri dev` stays in the foreground to keep the development server running. There is no daemon, localhost server, sidecar, or single-instance plugin. Two invocations create independent previews. Design and test Windows/Linux startup separately during porting.
+- On initial load, each WebView subscribes to its own change events before fetching the text. If an event overlaps a read, reread once to avoid missing a save. Events request a reread rather than carrying the entire document.
 - Keep Tauri command and event wiring in `main.ts`, and pass those operations to the preview controller. This lets DOM tests exercise the same loading, rendering, keyboard, and link handlers as the app without starting a native window. Only the latest requested read may update content or its error banner, including when earlier requests finish later.
-- `Esc` and other shortcuts use small frontend handlers to request exit. The native window close path must also terminate the process; check for orphaned processes on macOS.
-- Use one window about 800 px wide, with a CSS limit on content width. Adapt to narrower screens. Begin with the standard title bar; do not build a custom one before measuring startup and interaction.
+- `Esc` and other shortcuts use small frontend handlers to request closing the current window. The native window close path uses the same per-window cleanup and idle-exit condition; check for orphaned processes on macOS.
+- Use a window about 800 px wide for each document, with a CSS limit on content width. Adapt to narrower screens. Begin with the standard title bar; do not build a custom one before measuring startup and interaction.
 - Plain and modifier clicks keep opening supported links in the default application. Auxiliary link clicks and drops have no preview action. DOM drop handlers cover the entire window, including margins. Keep Tauri's native drag-drop handling enabled as before; this setting controls native event handling rather than declaring whether the application accepts drops.
 
 ### One-shot standard input
@@ -113,6 +113,35 @@ An explicit image base directory for standard input (for example `--base-dir`) i
 Live previews of editor buffers (Issue #14 stages 3 and 4: Neovim integration and live updates, including the `--stream` proposal) will not be adopted. `mjp <file>` already refreshes after every save, and editor autosave keeps the preview close to the current edits. Live previews would require document framing, update throttling, disconnect handling, process lifetime management, and editor-specific integration code merely to show changes before saving. Keeping file-based reload fits the lightweight, editor-independent direction in [PROJECT.md](PROJECT.md), which excludes Neovim extensions. Reconsider this only for a concrete workflow that needs to preview continuous updates to a document that does not exist as a file.
 
 In macOS release builds, transfer the validated text through an anonymous pipe to the detached GUI child. The child reads and validates its input before initializing the window. Close the pipe after writing so EOF completes the document; return after the handoff without waiting for the window to close. Stop and reap the child if writing fails. This keeps document text out of command arguments, environment variables, and temporary files. File-based startup keeps its existing path handoff, and development builds continue in the foreground. No additional dependencies or frontend IPC commands are needed.
+
+### Documents belong to windows
+
+Every preview has a process-unique `preview-<n>` label and a registry entry containing its document and image scope. Commands resolve the caller's injected WebView label, and reload subscriptions receive only that window's events. A shared template and `preview-*` capabilities keep CLI previews on the same path as OS-opened windows without accepting a frontend-selected document. Window creation and render performance marks carry the injected label; process startup marks remain separate.
+
+
+Registry entries own stoppable watcher handles, while workers retain only their document. Removal happens on `Destroyed`, after a close can no longer be cancelled. A failed window build rolls back the entry and watcher. The registry lock is released before stopping or joining a worker. Stopping wakes event/debounce waits and serializes with refresh publication so closed previews cannot receive later updates. Labels are never reused during a process lifetime.
+
+Closing one window leaves the others running. Natural exit requires both an empty registry and no unfinished open requests; explicit Quit exits the whole process. Exiting after the last preview is mjp's lightweight reading-session choice, unlike document apps that remain alive with no windows.
+
+
+### Open-request policy
+
+Treat the request origin separately from the process startup mode: initial CLI failures go to the terminal, while OS-open failures use one guidance window per event, including in a CLI child. Validate local file URLs and reject queries, fragments, and unconvertible paths. Process the first ten inputs of each event and report excess inputs together with read failures; ten is an event-level UX policy, not a total-window limit. Limit guidance to ten details and report the omitted count. Escape line breaks and controls visibly and choose a code fence longer than any backtick run so each path and reason remains literal. Display each entry on two lines: the path, then an indented reason. Keep file-load failures typed with separate path and reason fields until presentation; CLI errors still format them as `path: reason`. This avoids repeating a path in guidance and lets a reason start at the left even when its path is long.
+
+Canonical paths identify open documents and in-flight reservations. An open document is focused; an in-flight duplicate shares the existing load. Failed loads or window builds release reservations and never become open documents, so correcting the file and requesting it again retries naturally. Initial failures have no watcher; live-reload failures of successfully opened files continue to use the existing recoverable banner.
+
+Accepted requests remain pending while queued before Ready, while loading, and until their windows or guidance have been created. Draining the queue does not complete a request. The startup Welcome decision also prevents premature natural exit. Welcome has an explicit kind and is replaced only after a document window is successfully created, never when a read merely starts or fails.
+
+
+### Finder startup and process lifetime
+
+LaunchServices supplies `MJP_APP=1` through the bundle's merged `Info.plist`. It is a startup hint, not an authority boundary. A GUI child takes priority, followed by explicit CLI arguments, then the no-argument app hint, then the existing terminal-help or stdin behavior. Detached CLI children remove the app hint. The bundle declares `.md` and `.markdown` as a Viewer of `net.daringfireball.markdown` with Alternate rank and does not export that type.
+
+The app builds Tauri before running its event callback. Before Ready it only queues OS requests; workers canonicalize and read files, and the main thread reserves paths, registers results, creates windows, and decides when to exit. No registry/request lock spans I/O, a window operation, a main-thread dispatch, an await, or a watcher join. With no queued files, app startup shows Welcome; Reopen with no visible windows shows Welcome again while the process is still alive. Cmd+W and the close button close one window, while the native Cmd+Q/Quit action exits the process even during a load.
+
+A LaunchServices app instance opens separate windows for documents, matching macOS file-open delivery without a dispatcher and child processes. Ordinary LaunchServices launches are expected to deliver to an existing instance; directly running the executable inside the bundle as a CLI can create multiple instances. A CLI child therefore also handles OS open events by adding windows. CLI invocations remain independent and do not forward to an app or introduce a resident coordinator. Replacing the current document was rejected because opening another file should not discard a preview being read.
+
+Install the Finder bundle in `/Applications` and keep the standalone CLI in `~/.local/bin`. Documenting these separate entry points makes the expected LaunchServices delivery clear without depending on a bundled CLI process being the sole app instance. Setting a default app is an explicit Finder choice for each extension; declaring Alternate rank makes mjp available as a viewer without claiming ownership of the Markdown type. The English and Japanese README describe the same installation, retry, and close behavior.
 
 ## 4. File watching
 
@@ -131,7 +160,7 @@ Tauri's [filesystem plugin](https://v2.tauri.app/plugin/file-system/) also has a
 1. Treat input Markdown as untrusted. Sanitize the renderer's output with [DOMPurify](https://github.com/cure53/DOMPurify), limiting HTML to needed tags and attributes before inserting it into the DOM. Exclude scripts, event attributes, forms, iframes, SVG/MathML, and dangerous URLs. Raw HTML is not a Phase 1 feature. The implementation now uses `markdown-it` with raw HTML disabled.
 2. Add a CSP that allows bundled scripts and styles plus Tauri IPC while blocking remote scripts, frames, objects, and form submissions. Use `img-src blob:` for image bytes returned by the scoped Rust command; remote, data, and file URLs remain unavailable to image elements. Check exact hashes, nonces, and IPC sources produced by Tauri when implementing the policy.
 3. Never navigate the app WebView when a document link is clicked. Validate only `https:`, `http:`, and `mailto:`, then pass them to the OS default app. Do not open `javascript:`, `data:`, `file:`, or relative links in Phase 1. If using Tauri's [opener plugin](https://v2.tauri.app/plugin/opener/), recheck URLs in a narrow Rust command rather than granting unrestricted frontend access. Deny other normal navigation and new-window requests.
-4. Do not add general filesystem, shell, or HTTP permissions, an external CDN, or a broad asset protocol exposing files to the WebView. Limit inputs to 10 MiB; reject larger files before opening a window and retain the last content with an error during reload. Reject nonregular files such as FIFOs. On Unix, open with `O_NONBLOCK` and inspect the opened handle to avoid blocking. Verify that links and images in Markdown cannot read arbitrary local files.
+4. Do not add general filesystem, shell, or HTTP permissions, an external CDN, or a broad asset protocol exposing files to the WebView. Limit inputs to 10 MiB; reject larger files before opening a document window (CLI error or OS-request guidance) and retain the last content with an error during reload. Reject nonregular files such as FIFOs. On Unix, open with `O_NONBLOCK` and inspect the opened handle to avoid blocking. Verify that links and images in Markdown cannot read arbitrary local files.
 
 ## 6. Directory layout
 

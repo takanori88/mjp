@@ -1,46 +1,106 @@
 use std::{
     error::Error,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, RecvTimeoutError},
+    sync::{
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use notify::{Event, RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 use super::Document;
 
 const SETTLE_TIME: Duration = Duration::from_millis(140);
 const MAX_SETTLE_TIME: Duration = Duration::from_millis(700);
 
-type Subscription = (notify::RecommendedWatcher, Receiver<notify::Result<Event>>);
+enum Message {
+    Event(notify::Result<Event>),
+    Stop,
+}
 
-pub fn start(app: AppHandle, path: PathBuf) -> Result<(), Box<dyn Error>> {
-    let (watcher, rx) = subscribe(&path)?;
-    thread::Builder::new()
+type Subscription = (
+    notify::RecommendedWatcher,
+    Sender<Message>,
+    Receiver<Message>,
+);
+
+pub struct WatchHandle {
+    watcher: Option<notify::RecommendedWatcher>,
+    sender: Sender<Message>,
+    stopped: Arc<Mutex<bool>>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for WatchHandle {
+    fn drop(&mut self) {
+        *self.stopped.lock().expect("watch state poisoned") = true;
+        let _ = self.sender.send(Message::Stop);
+        self.watcher.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+pub fn start(
+    app: AppHandle,
+    label: String,
+    document: Arc<Document>,
+    path: PathBuf,
+) -> Result<WatchHandle, Box<dyn Error>> {
+    let (watcher, sender, rx) = subscribe(&path)?;
+    start_worker(Some(watcher), sender, rx, path, move || {
+        if let Some(revision) = document.refresh() {
+            let _ = app.emit_to(&label, "document-changed", revision);
+        }
+    })
+}
+
+fn start_worker(
+    watcher: Option<notify::RecommendedWatcher>,
+    sender: Sender<Message>,
+    rx: Receiver<Message>,
+    path: PathBuf,
+    mut changed: impl FnMut() + Send + 'static,
+) -> Result<WatchHandle, Box<dyn Error>> {
+    let stopped = Arc::new(Mutex::new(false));
+    let worker_stopped = Arc::clone(&stopped);
+    let worker = thread::Builder::new()
         .name("mjp-file-watch".into())
         .spawn(move || {
-            let _watcher = watcher;
             process_events(&rx, &path, || {
-                if let Some(revision) = app.state::<Document>().refresh() {
-                    let _ = app.emit_to("main", "document-changed", revision);
+                // A stop and a refresh must not cross, even when a read is already underway.
+                let stopped = worker_stopped.lock().expect("watch state poisoned");
+                if !*stopped {
+                    changed();
                 }
             });
         })?;
-    Ok(())
+    Ok(WatchHandle {
+        watcher,
+        sender,
+        stopped,
+        worker: Some(worker),
+    })
 }
 
 fn subscribe(path: &Path) -> Result<Subscription, Box<dyn Error>> {
     let parent = path.parent().ok_or("file has no parent directory")?;
     let (tx, rx) = mpsc::channel();
-    let mut watcher = notify::recommended_watcher(tx)?;
+    let events = tx.clone();
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = events.send(Message::Event(event));
+    })?;
     watcher.watch(parent, RecursiveMode::NonRecursive)?;
-    Ok((watcher, rx))
+    Ok((watcher, tx, rx))
 }
 
-fn process_events(rx: &Receiver<notify::Result<Event>>, path: &Path, mut changed: impl FnMut()) {
-    while let Ok(event) = rx.recv() {
+fn process_events(rx: &Receiver<Message>, path: &Path, mut changed: impl FnMut()) {
+    while let Ok(Message::Event(event)) = rx.recv() {
         if !is_relevant(&event, path) {
             continue;
         }
@@ -51,7 +111,7 @@ fn process_events(rx: &Receiver<notify::Result<Event>>, path: &Path, mut changed
     }
 }
 
-fn wait_for_settle(rx: &Receiver<notify::Result<Event>>, target: &Path) -> bool {
+fn wait_for_settle(rx: &Receiver<Message>, target: &Path) -> bool {
     let start = Instant::now();
     let deadline = start + MAX_SETTLE_TIME;
     let mut quiet_until = start + SETTLE_TIME;
@@ -63,7 +123,10 @@ fn wait_for_settle(rx: &Receiver<notify::Result<Event>>, target: &Path) -> bool 
             return true;
         }
         match rx.recv_timeout(remaining) {
-            Ok(event) if is_relevant(&event, target) => quiet_until = Instant::now() + SETTLE_TIME,
+            Ok(Message::Stop) => return false,
+            Ok(Message::Event(event)) if is_relevant(&event, target) => {
+                quiet_until = Instant::now() + SETTLE_TIME
+            }
             Ok(_) => {}
             Err(RecvTimeoutError::Timeout) => return true,
             Err(RecvTimeoutError::Disconnected) => return false,
@@ -112,7 +175,8 @@ mod tests {
             let path = directory.join("selected.md");
             fs::write(&path, "# Initial").unwrap();
             let document = crate::load_document([path.clone().into_os_string()]).unwrap();
-            let (watcher, events) = subscribe(&path).unwrap();
+            let (watcher, sender, events) = subscribe(&path).unwrap();
+            drop(sender);
             let (send, updates) = mpsc::channel();
             let worker = thread::spawn(move || {
                 process_events(&events, &path, || {
@@ -188,7 +252,7 @@ mod tests {
             let end = Instant::now() + MAX_SETTLE_TIME * 2;
             while Instant::now() < end && !producer_stop.load(Ordering::Relaxed) {
                 let event = Event::new(notify::EventKind::Any).add_path(event_path.clone());
-                if producer_sender.send(Ok(event)).is_err() {
+                if producer_sender.send(Message::Event(Ok(event))).is_err() {
                     break;
                 }
                 thread::sleep(Duration::from_millis(5));
@@ -229,5 +293,97 @@ mod tests {
             &receiver,
             Path::new("/documents/selected.md")
         ));
+    }
+    #[test]
+    fn stopping_wakes_an_idle_worker_and_releases_its_document() {
+        let (sender, receiver) = mpsc::channel();
+        let document = Arc::new(crate::load_stdin(b"before".as_slice()).unwrap());
+        let weak = Arc::downgrade(&document);
+        let handle = start_worker(
+            None,
+            sender,
+            receiver,
+            PathBuf::from("selected.md"),
+            move || {
+                document.set_warning("changed".into());
+            },
+        )
+        .unwrap();
+        drop(handle);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn stopping_during_settle_prevents_later_document_updates() {
+        let (sender, receiver) = mpsc::channel();
+        let document = Arc::new(crate::load_stdin(b"before".as_slice()).unwrap());
+        let worker_document = Arc::clone(&document);
+        let handle = start_worker(
+            None,
+            sender.clone(),
+            receiver,
+            PathBuf::from("selected.md"),
+            move || {
+                worker_document.set_warning("changed".into());
+            },
+        )
+        .unwrap();
+        sender
+            .send(Message::Event(Ok(Event::new(notify::EventKind::Any))))
+            .unwrap();
+        drop(handle);
+        assert_eq!(document.snapshot().unwrap().revision, 0);
+        assert!(sender
+            .send(Message::Event(Ok(Event::new(notify::EventKind::Any))))
+            .is_err());
+    }
+    #[test]
+    fn closing_one_watcher_keeps_the_other_documents_updates_independent() {
+        let root =
+            std::env::temp_dir().join(format!("mjp-watch-independent-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut handles = Vec::new();
+        let mut senders = Vec::new();
+        let mut documents = Vec::new();
+        let (updates, received) = mpsc::channel();
+        for name in ["a", "b"] {
+            let path = root.join(format!("{name}.md"));
+            fs::write(&path, name).unwrap();
+            let document = Arc::new(crate::load_document([path.clone().into_os_string()]).unwrap());
+            documents.push(Arc::clone(&document));
+            let (sender, events) = mpsc::channel();
+            senders.push(sender.clone());
+            let updates = updates.clone();
+            handles.push(
+                start_worker(None, sender, events, path, move || {
+                    if let Some(revision) = document.refresh() {
+                        updates.send((name, revision)).unwrap();
+                    }
+                })
+                .unwrap(),
+            );
+        }
+        fs::write(root.join("a.md"), "saved a").unwrap();
+        senders[0]
+            .send(Message::Event(Ok(Event::new(notify::EventKind::Any))))
+            .unwrap();
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            ("a", 1)
+        );
+        assert_eq!(documents[1].snapshot().unwrap().text, "b");
+        drop(handles.remove(0));
+        fs::write(root.join("b.md"), "saved b").unwrap();
+        senders[1]
+            .send(Message::Event(Ok(Event::new(notify::EventKind::Any))))
+            .unwrap();
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            ("b", 1)
+        );
+        assert_eq!(documents[0].snapshot().unwrap().text, "saved a");
+        assert_eq!(documents[1].snapshot().unwrap().text, "saved b");
+        drop(handles);
+        fs::remove_dir_all(root).unwrap();
     }
 }

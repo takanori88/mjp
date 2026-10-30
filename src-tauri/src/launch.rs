@@ -9,8 +9,8 @@ pub const GUI_CHILD_ENV: &str = "MJP_GUI_CHILD";
 pub fn spawn_gui(document: mjp_lib::Document) -> io::Result<()> {
     let executable = std::env::current_exe()?.canonicalize()?;
     let mut command = Command::new(executable);
+    configure_child(&mut command);
     command
-        .env(GUI_CHILD_ENV, "1")
         .current_dir("/")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -34,6 +34,10 @@ pub fn spawn_gui(document: mjp_lib::Document) -> io::Result<()> {
         Some(document.into_text().map_err(io::Error::other)?)
     };
     spawn_with_input(&mut command, text.as_deref()).map(|_| ())
+}
+
+fn configure_child(command: &mut Command) {
+    command.env(GUI_CHILD_ENV, "1").env_remove("MJP_APP");
 }
 
 fn spawn_with_input(command: &mut Command, text: Option<&str>) -> io::Result<Child> {
@@ -111,5 +115,17 @@ mod tests {
         let mut command = Command::new("/usr/bin/true");
         let error = spawn_with_input(&mut command, Some(&"x".repeat(2 * 1024 * 1024))).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    }
+    #[test]
+    fn detached_children_discard_the_launchservices_app_hint() {
+        let mut command = Command::new("mjp");
+        command.env("MJP_APP", "1");
+        configure_child(&mut command);
+        let env: std::collections::HashMap<_, _> = command.get_envs().collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("MJP_APP")), Some(&None));
+        assert_eq!(
+            env.get(std::ffi::OsStr::new(GUI_CHILD_ENV)),
+            Some(&Some(std::ffi::OsStr::new("1")))
+        );
     }
 }

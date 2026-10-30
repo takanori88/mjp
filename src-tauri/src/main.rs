@@ -12,8 +12,21 @@ fn main() {
     } else {
         "cli_entry"
     });
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let mode = cli::startup_mode(
+        std::env::var_os("MJP_GUI_CHILD").is_some(),
+        !args.is_empty(),
+        std::env::var_os("MJP_APP").is_some_and(|value| value == "1"),
+    );
+    if mode == cli::StartupMode::App {
+        if let Err(error) = mjp_lib::run_app() {
+            eprintln!("mjp: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let stdin = io::stdin();
-    let input = match cli::parse(std::env::args_os().skip(1), stdin.is_terminal()) {
+    let input = match cli::parse(args, stdin.is_terminal()) {
         Ok(cli::Command::Help) => {
             println!("{}", cli::HELP);
             return;
