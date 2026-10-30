@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::Document;
+use crate::{watch::WatchHandle, Document};
 
 #[derive(Default)]
 pub(crate) struct Documents(Mutex<Registry>);
@@ -11,7 +11,12 @@ pub(crate) struct Documents(Mutex<Registry>);
 #[derive(Default)]
 struct Registry {
     next_label: u64,
-    entries: HashMap<String, Arc<Document>>,
+    entries: HashMap<String, Entry>,
+}
+
+struct Entry {
+    document: Arc<Document>,
+    watcher: Option<WatchHandle>,
 }
 
 impl Documents {
@@ -22,7 +27,13 @@ impl Documents {
             .next_label
             .checked_add(1)
             .expect("window labels exhausted");
-        registry.entries.insert(label.clone(), document);
+        registry.entries.insert(
+            label.clone(),
+            Entry {
+                document,
+                watcher: None,
+            },
+        );
         label
     }
 
@@ -32,8 +43,38 @@ impl Documents {
             .map_err(|_| "document registry is unavailable")?
             .entries
             .get(label)
-            .cloned()
+            .map(|entry| Arc::clone(&entry.document))
             .ok_or_else(|| "document is unavailable".into())
+    }
+    pub fn attach_watcher(&self, label: &str, watcher: WatchHandle) {
+        let mut registry = self.0.lock().expect("document registry poisoned");
+        if let Some(entry) = registry.entries.get_mut(label) {
+            entry.watcher = Some(watcher);
+            return;
+        }
+        drop(registry);
+        drop(watcher);
+    }
+
+    pub fn remove(&self, label: &str) {
+        let entry = self
+            .0
+            .lock()
+            .expect("document registry poisoned")
+            .entries
+            .remove(label);
+        // Stopping a watcher can join its worker; never retain the registry lock here.
+        drop(entry);
+    }
+
+    pub fn can_exit(&self, has_pending_requests: bool) -> bool {
+        !has_pending_requests
+            && self
+                .0
+                .lock()
+                .expect("document registry poisoned")
+                .entries
+                .is_empty()
     }
 }
 
@@ -80,5 +121,24 @@ mod tests {
                 .ends_with(name.as_bytes()));
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn removing_a_window_releases_its_document_without_reusing_the_label() {
+        let documents = Documents::default();
+        let document = Arc::new(crate::load_stdin(b"a".as_slice()).unwrap());
+        let weak = Arc::downgrade(&document);
+        let a = documents.insert(document);
+        let b = documents.insert(Arc::new(crate::load_stdin(b"b".as_slice()).unwrap()));
+        documents.remove(&a);
+        assert!(weak.upgrade().is_none());
+        assert!(documents.get(&a).is_err());
+        assert!(documents.get(&b).is_ok());
+        assert!(!documents.can_exit(false));
+        documents.remove(&b);
+        assert!(documents.can_exit(false));
+        assert!(!documents.can_exit(true));
+        let c = documents.insert(Arc::new(crate::load_stdin(b"c".as_slice()).unwrap()));
+        assert_ne!(c, a);
+        assert_ne!(c, b);
     }
 }

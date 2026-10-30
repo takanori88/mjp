@@ -274,6 +274,37 @@ fn perf_mark(window: tauri::WebviewWindow, stage: String, rendered_ms: f64) {
     }
 }
 
+fn create_preview(app: &tauri::AppHandle, document: Document) -> tauri::Result<String> {
+    let title = document.title();
+    let document = Arc::new(document);
+    let documents = app.state::<Documents>();
+    let label = documents.insert(Arc::clone(&document));
+    if let Some(path) = document.path.clone() {
+        match watch::start(app.clone(), label.clone(), Arc::clone(&document), path) {
+            Ok(watcher) => documents.attach_watcher(&label, watcher),
+            Err(error) => document.set_warning(format!("Live reload is unavailable: {error}")),
+        }
+    }
+    let result = (|| {
+        let dev_url = app.config().build.dev_url.clone();
+        let mut config = app.config().app.windows[0].clone();
+        config.label = label.clone();
+        let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+            .title(format!("{title} — mjp"))
+            .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .build()?;
+        #[cfg(feature = "perf")]
+        perf::mark_window_now(window.label(), "window_created");
+        let _ = window.set_focus();
+        Ok(label.clone())
+    })();
+    if result.is_err() {
+        documents.remove(&label);
+    }
+    result
+}
+
 pub fn run(document: Document) -> tauri::Result<()> {
     #[cfg(feature = "perf")]
     perf::mark_now("gui_run");
@@ -297,35 +328,17 @@ pub fn run(document: Document) -> tauri::Result<()> {
     ]);
     builder
         .setup(move |app| {
-            let title = document.title();
-            let document = Arc::new(document);
-            let label = app.state::<Documents>().insert(Arc::clone(&document));
-            if let Some(path) = document.path.clone() {
-                if let Err(error) = watch::start(
-                    app.handle().clone(),
-                    label.clone(),
-                    Arc::clone(&document),
-                    path,
-                ) {
-                    document.set_warning(format!("Live reload is unavailable: {error}"));
-                }
-            }
-            let dev_url = app.config().build.dev_url.clone();
-            let mut config = app.config().app.windows[0].clone();
-            config.label = label;
-            let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
-                .title(format!("{title} — mjp"))
-                .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                .build()?;
-            #[cfg(feature = "perf")]
-            perf::mark_window_now(window.label(), "window_created");
-            window.set_focus()?;
+            create_preview(app.handle(), document)?;
             Ok(())
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                window.app_handle().exit(0);
+                let app = window.app_handle();
+                let documents = app.state::<Documents>();
+                documents.remove(window.label());
+                if documents.can_exit(false) {
+                    app.exit(0);
+                }
             }
         })
         .run(tauri::generate_context!())

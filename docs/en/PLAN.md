@@ -118,6 +118,11 @@ In macOS release builds, transfer the validated text through an anonymous pipe t
 
 Every preview has a process-unique `preview-<n>` label and a registry entry containing its document and image scope. Commands resolve the caller's injected WebView label, and reload subscriptions receive only that window's events. A shared template and `preview-*` capabilities keep CLI previews on the same path as future OS-opened windows without accepting a frontend-selected document. Window creation and render performance marks carry the injected label; process startup marks remain separate.
 
+
+Registry entries own stoppable watcher handles, while workers retain only their document. Removal happens on `Destroyed`, after a close can no longer be cancelled. A failed window build rolls back the entry and watcher. The registry lock is released before stopping or joining a worker. Stopping wakes event/debounce waits and serializes with refresh publication so closed previews cannot receive later updates. Labels are never reused during a process lifetime.
+
+Closing one window leaves the others running. Natural exit requires both an empty registry and no unfinished open requests; explicit Quit exits the whole process. Exiting after the last preview is mjp's lightweight reading-session choice, unlike document apps that remain alive with no windows.
+
 ## 4. File watching
 
 The first choice is Rust [notify](https://docs.rs/notify/latest/notify/) with `recommended_watcher`. Watch the parent directory nonrecursively, not the file itself, and handle events involving the target filename. Editors differ in whether they overwrite, delete and recreate, or replace from a temporary file. Instead of interpreting each event type strictly, reread the target after a short debounce (initially 100–200 ms) and coalesce duplicates.
