@@ -167,19 +167,37 @@ pub fn load_document(args: impl IntoIterator<Item = OsString>) -> Result<Documen
         return Err("empty file path".into());
     }
 
-    let label = path.display();
-    let text = read_markdown(&path).map_err(|error| match error {
-        ReadError::Access(error) if error.kind() == io::ErrorKind::NotFound => {
-            format!("{label}: file not found")
-        }
-        ReadError::Access(error) => format!("{label}: cannot access file: {error}"),
-        ReadError::NotRegular => format!("{label}: not a regular file"),
-        ReadError::TooLarge => format!("{label}: file is too large (max 10 MiB)"),
-        ReadError::InvalidUtf8 => format!("{label}: file is not valid UTF-8"),
-        ReadError::Read(error) => format!("{label}: cannot read file: {error}"),
+    load_document_path(&path).map_err(|error| error.to_string())
+}
+
+#[derive(Debug)]
+struct DocumentLoadError {
+    path: PathBuf,
+    reason: String,
+}
+
+impl fmt::Display for DocumentLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.path.display(), self.reason)
+    }
+}
+
+fn load_document_path(path: &Path) -> Result<Document, DocumentLoadError> {
+    let text = read_markdown(path).map_err(|error| DocumentLoadError {
+        path: path.to_path_buf(),
+        reason: match error {
+            ReadError::Access(error) if error.kind() == io::ErrorKind::NotFound => {
+                "file not found".into()
+            }
+            ReadError::Access(error) => format!("cannot access file: {error}"),
+            ReadError::Read(error) => format!("cannot read file: {error}"),
+            error => error.to_string(),
+        },
     })?;
-    let path = fs::canonicalize(&path)
-        .map_err(|error| format!("{label}: cannot resolve file path: {error}"))?;
+    let path = fs::canonicalize(path).map_err(|error| DocumentLoadError {
+        path: path.to_path_buf(),
+        reason: format!("cannot resolve file path: {error}"),
+    })?;
 
     Ok(Document {
         images: images::ImageScope::new(&path).ok().map(Arc::new),

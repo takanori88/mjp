@@ -188,10 +188,7 @@ fn load_reserved(app: &tauri::AppHandle, paths: Vec<PathBuf>, failures: Failures
         let loaded = tauri::async_runtime::spawn_blocking(move || {
             inputs
                 .into_iter()
-                .map(|path| {
-                    let result = crate::load_document([path.clone().into_os_string()]);
-                    (path, result)
-                })
+                .map(|path| crate::load_document_path(&path))
                 .collect::<Vec<_>>()
         })
         .await;
@@ -199,13 +196,13 @@ fn load_reserved(app: &tauri::AppHandle, paths: Vec<PathBuf>, failures: Failures
             let mut failures = failures;
             match loaded {
                 Ok(results) => {
-                    for (path, result) in results {
+                    for result in results {
                         match result {
                             Ok(document) => {
                                 // The receiving process may have started as a CLI preview.
                                 let _ = open_document(app, document, Origin::OsOpen, &mut failures);
                             }
-                            Err(error) => failures.push(path.display().to_string(), error),
+                            Err(error) => failures.push_document(error),
                         }
                     }
                 }
@@ -362,5 +359,31 @@ mod tests {
         assert!(text.contains("missing.md"));
         assert!(text.contains("https://example.com/file.md"));
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn failure_guidance_displays_each_failed_document_path_once() {
+        let root =
+            std::env::temp_dir().join(format!("mjp-failure-guidance-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let invalid = root.join("bad-utf8.md");
+        let oversized = root.join("too-large.md");
+        fs::write(&invalid, [0xff]).unwrap();
+        fs::File::create(&oversized)
+            .unwrap()
+            .set_len(crate::MAX_DOCUMENT_BYTES + 1)
+            .unwrap();
+        let mut failures = Failures::default();
+        for path in [&invalid, &oversized] {
+            failures.push_document(crate::load_document_path(path).unwrap_err());
+        }
+        fs::remove_dir_all(&root).unwrap();
+        let text = failures.markdown();
+        for path in [&invalid, &oversized] {
+            assert_eq!(
+                text.matches(&path.display().to_string()).count(),
+                1,
+                "{text}"
+            );
+        }
     }
 }

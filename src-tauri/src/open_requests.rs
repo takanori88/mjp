@@ -169,6 +169,10 @@ impl Failures {
         }
     }
 
+    pub fn push_document(&mut self, error: crate::DocumentLoadError) {
+        self.push(error.path.display().to_string(), error.reason);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.details.is_empty() && self.omitted == 0
     }
@@ -177,7 +181,7 @@ impl Failures {
         let lines: Vec<_> = self
             .details
             .iter()
-            .map(|(input, reason)| format!("{}: {}", visible(input), visible(reason)))
+            .map(|(input, reason)| format!("{}\n  {}", visible(input), visible(reason)))
             .collect();
         let longest_run = lines
             .iter()
@@ -335,11 +339,13 @@ mod tests {
     }
 
     #[test]
-    fn failure_details_stay_on_single_lines_inside_a_longer_fence() {
+    fn failure_fields_stay_on_separate_lines_inside_a_longer_fence() {
         let mut failures = Failures::default();
         failures.push("/tmp/````\n# name\r\t\0.md", "cannot\nread");
         let text = failures.markdown();
-        assert!(text.contains("\n`````\n/tmp/````\\n# name\\r\\t\\u{0}.md: cannot\\nread\n`````\n"));
+        assert!(
+            text.contains("\n`````\n/tmp/````\\n# name\\r\\t\\u{0}.md\n  cannot\\nread\n`````\n")
+        );
         for _ in 0..12 {
             failures.push("another", "missing");
         }
@@ -380,5 +386,19 @@ mod tests {
         assert!(requests.ready().is_empty());
         requests.finish_startup();
         assert!(!requests.has_pending());
+    }
+    #[test]
+    fn failure_reasons_are_displayed_on_a_separate_line_below_the_path() {
+        let path = format!("/tmp/{}/too-large.md", "long-directory-name/".repeat(10));
+        let reason = "file is too large (max 10 MiB)";
+        let mut failures = Failures::default();
+        failures.push(&path, reason);
+        let text = failures.markdown();
+        let lines: Vec<_> = text.lines().collect();
+        let index = lines
+            .iter()
+            .position(|line| *line == path)
+            .expect("path has its own line");
+        assert_eq!(lines[index + 1], format!("  {reason}"));
     }
 }

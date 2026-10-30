@@ -90,3 +90,35 @@ fn a_gui_child_keeps_stdin_behavior_even_with_an_inherited_app_hint() {
         .unwrap()
         .contains("stdin: input is not valid UTF-8"));
 }
+
+#[test]
+fn document_read_errors_keep_the_existing_path_and_reason_on_one_terminal_line() {
+    let root = std::env::temp_dir().join(format!("mjp-cli-read-errors-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let invalid = root.join("bad-utf8.md");
+    let oversized = root.join("too-large.md");
+    std::fs::write(&invalid, [0xff]).unwrap();
+    std::fs::File::create(&oversized)
+        .unwrap()
+        .set_len(10 * 1024 * 1024 + 1)
+        .unwrap();
+    let cases = [
+        (invalid, "file is not valid UTF-8"),
+        (oversized, "file is too large (max 10 MiB)"),
+        (root.join("missing.md"), "file not found"),
+        (root.clone(), "not a regular file"),
+    ];
+    let outputs: Vec<_> = cases
+        .iter()
+        .map(|(path, _)| run(&[path.to_str().unwrap()], &[]))
+        .collect();
+    std::fs::remove_dir_all(&root).unwrap();
+    for ((path, reason), output) in cases.iter().zip(outputs) {
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!("mjp: {}: {reason}\n", path.display())
+        );
+    }
+}
