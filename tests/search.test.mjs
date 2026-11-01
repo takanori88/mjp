@@ -58,7 +58,7 @@ function rangesFor(segments, query, limit = search.MAX_MATCHES) {
   return search.createMatchRanges(segments, starts, folded.length);
 }
 
-function repaintFixture(t, classes = null, style = null, highlights = true) {
+function searchControllerFixture(t, classes = null, style = null, highlights = true) {
   const { article, window } = articleFixture(t, '<p>short short <em>shore</em></p>');
   if (classes !== null) article.setAttribute('class', classes);
   if (style !== null) article.setAttribute('style', style);
@@ -86,130 +86,60 @@ function repaintFixture(t, classes = null, style = null, highlights = true) {
   return { article, window, controller, marks, frames, input, frame };
 }
 
-for (const [classes, style, transform] of [
-  [null, null, 'translateZ(0)'],
-  ['', '', 'translateZ(0)'],
-  ['markdown-body keep', 'color:red; transform:translateX(2px) !important', 'translateX(2px) translateZ(0)'],
-]) {
-  test(`coalesces highlight repaint and restores the exact article attributes ${JSON.stringify([classes, style])}`, t => {
-    const f = repaintFixture(t, classes, style);
-    const html = f.article.innerHTML;
-    const nodes = [...f.article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]);
-    const setStyle = t.mock.method(f.article.style, 'setProperty');
-    f.input('short');
-    f.controller.commit();
-    f.controller.move(1);
-    f.controller.move(-1);
-    f.controller.close();
-    assert.equal(setStyle.mock.callCount(), 0);
-    assert.equal(f.frames.size, 1);
-    f.frame();
-    assert.equal(setStyle.mock.callCount(), 1);
-    assert.deepEqual(setStyle.mock.calls[0].arguments, ['transform', transform, 'important']);
-    assert.equal(f.article.style.transform, transform);
-    assert.equal(f.article.getAttribute('class'), classes);
-    assert.equal(f.frames.size, 1);
-    f.frame();
-    assert.equal(setStyle.mock.callCount(), 1);
-    assert.equal(f.frames.size, 0);
-    assert.equal(f.article.getAttribute('style'), style);
-    assert.equal(f.article.getAttribute('class'), classes);
-    assert.equal(f.article.innerHTML, html);
-    assert.deepEqual([...f.article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]), nodes);
-  });
-}
-
-test('requests repaint in the input frame after updating the latest coalesced query', t => {
-  const f = repaintFixture(t);
-  const observed = [];
-  const setProperty = f.article.style.setProperty;
-  t.mock.method(f.article.style, 'setProperty', function (...args) {
-    observed.push([...f.marks.registry.get('mjp-search')].map(range => range.toString()));
-    return setProperty.apply(this, args);
-  });
-  for (const query of ['s', 'sh', 'sho', 'short']) f.input(query);
-  assert.equal(f.frames.size, 1);
-  f.frame();
-  assert.deepEqual(observed, [['short', 'short']]);
-  assert.equal(f.article.style.transform, 'translateZ(0)');
-  f.frame();
-  assert.equal(f.article.getAttribute('style'), null);
-  assert.equal(f.frames.size, 0);
-});
-
-for (const query of ['', 'missing']) {
-  test(`requests repaint when ${JSON.stringify(query)} removes previously visible matches`, t => {
-    const f = repaintFixture(t);
-    f.input('short');
-    f.frame();
-    f.frame();
-    const setStyle = t.mock.method(f.article.style, 'setProperty');
-    f.input(query);
-    f.frame();
-    assert.equal(f.marks.registry.get('mjp-search').size, 0);
-    assert.equal(setStyle.mock.callCount(), 1);
-    f.frame();
-    assert.equal(f.article.getAttribute('style'), null);
-    assert.equal(f.frames.size, 0);
-  });
-}
-
-test('coalesces updates during an active repaint and restores after the final frame', t => {
-  const f = repaintFixture(t, 'keep', 'color:red');
-  const setStyle = t.mock.method(f.article.style, 'setProperty');
-  f.input('short');
-  f.frame();
-  assert.equal(setStyle.mock.callCount(), 1);
-  f.controller.commit();
-  f.controller.move(1);
-  f.controller.move(-1);
-  f.frame();
-  assert.equal(setStyle.mock.callCount(), 2);
-  f.frame();
-  assert.equal(setStyle.mock.callCount(), 2);
-  assert.equal(f.article.getAttribute('style'), 'color:red');
-  assert.equal(f.article.className, 'keep');
-  assert.equal(f.frames.size, 0);
-});
-
-for (const active of [false, true]) {
-  test(`cancels ${active ? 'active' : 'pending'} repaint on disposal without later article mutations`, t => {
-    const f = repaintFixture(t, 'keep', 'color:red');
-    const setStyle = t.mock.method(f.article.style, 'setProperty');
-    f.input('short');
-    if (active) {
+for (const highlights of [true, false]) {
+  for (const [classes, style] of [
+    [null, null], ['', ''], ['markdown-body keep', 'color:red; transform:translateX(2px) !important'],
+  ]) {
+    test(`search never changes article class or style with ${highlights ? 'CSS highlights' : 'Selection'} and ${JSON.stringify([classes, style])}`, t => {
+      const f = searchControllerFixture(t, classes, style, highlights);
+      const html = f.article.innerHTML;
+      const nodes = [...f.article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]);
+      const observer = new f.window.MutationObserver(() => {});
+      observer.observe(f.article, { attributes: true, attributeFilter: ['class', 'style'] });
+      t.after(() => observer.disconnect());
+      const unchanged = () => {
+        assert.equal(observer.takeRecords().length, 0);
+        assert.equal(f.article.getAttribute('class'), classes);
+        assert.equal(f.article.getAttribute('style'), style);
+        assert.equal(f.article.innerHTML, html);
+        assert.deepEqual([...f.article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]), nodes);
+      };
+      for (const query of ['s', 'sh', 'short']) {
+        f.input(query);
+        f.frame();
+        unchanged();
+        assert.equal(f.frames.size, 0);
+      }
+      f.controller.commit();
       f.frame();
-      assert.equal(setStyle.mock.callCount(), 1);
-    } else f.controller.commit();
-    const queued = [...f.frames.values()];
-    f.controller.dispose();
-    assert.equal(f.article.getAttribute('style'), 'color:red');
-    assert.equal(f.article.className, 'keep');
-    assert.equal(f.frames.size, 0);
-    const attributes = t.mock.method(f.article, 'setAttribute');
-    const remove = t.mock.method(f.article, 'removeAttribute');
-    setStyle.mock.resetCalls();
-    queued.forEach(callback => callback(0));
-    f.frame();
-    assert.equal(setStyle.mock.callCount(), 0);
-    assert.equal(attributes.mock.callCount(), 0);
-    assert.equal(remove.mock.callCount(), 0);
-    assert.equal(f.frames.size, 0);
-  });
+      unchanged();
+      for (const direction of [1, -1]) {
+        f.controller.move(direction);
+        f.frame();
+        unchanged();
+      }
+      f.controller.documentReplaced();
+      f.frame();
+      unchanged();
+      f.controller.close();
+      f.frame();
+      unchanged();
+      f.controller.open();
+      for (const query of ['missing', '']) {
+        f.input(query);
+        f.frame();
+        unchanged();
+      }
+      f.controller.commit();
+      f.frame();
+      unchanged();
+      f.controller.dispose();
+      f.frame();
+      unchanged();
+      assert.equal(f.frames.size, 0);
+    });
+  }
 }
-
-test('does not request highlight repaint in Selection fallback', t => {
-  const f = repaintFixture(t, 'keep', 'color:red', false);
-  const setStyle = t.mock.method(f.article.style, 'setProperty');
-  f.input('short');
-  f.frame();
-  f.controller.commit();
-  f.frame();
-  f.frame();
-  assert.equal(setStyle.mock.callCount(), 0);
-  assert.equal(f.article.getAttribute('style'), 'color:red');
-  assert.equal(f.frames.size, 0);
-});
 
 const rect = (top, right, left = 0) => ({ top, bottom: top + 20, left, right, width: right - left, height: 20 });
 
@@ -276,15 +206,11 @@ for (const [query, result, open, shown] of [
     assert.equal(controller.isOpen, open);
     assert.equal(controller.isShown, shown);
     if (result === 'committed') {
-      assert.equal(frames.size, 2);
+      assert.equal(frames.size, 1);
       const queued = [...frames.values()];
       frames.clear();
       queued.forEach(callback => callback(0));
       assert.equal(article.parentElement.querySelector('.search-count').textContent, '[1/3]');
-      assert.equal(article.style.transform, 'translateZ(0)');
-      const cleanup = [...frames.values()];
-      frames.clear();
-      cleanup.forEach(callback => callback(0));
       assert.equal(article.getAttribute('style'), null);
     } else assert.equal(frames.size, 0);
     assert.equal(window.document.activeElement, open ? controller.input : article);

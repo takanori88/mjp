@@ -321,10 +321,6 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   let truncated = false;
   let frame: number | undefined;
   let positionFrame: number | undefined;
-  let repaintFrame: number | undefined;
-  let restoreFrame: number | undefined;
-  let restoreStyle: (() => void) | undefined;
-  let repaintAgain = false;
   let disposed = false;
   let selected: SelectionState | undefined;
   let origin: SearchOrigin | undefined;
@@ -332,60 +328,6 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   function cancelSearch(): void {
     if (frame !== undefined) view.cancelAnimationFrame(frame);
     frame = undefined;
-  }
-
-  function restoreRepaint(): void {
-    const restore = restoreStyle;
-    restoreStyle = undefined;
-    restore?.();
-  }
-
-  function cancelRepaint(): void {
-    if (repaintFrame !== undefined) view.cancelAnimationFrame(repaintFrame);
-    if (restoreFrame !== undefined) view.cancelAnimationFrame(restoreFrame);
-    repaintFrame = undefined;
-    restoreFrame = undefined;
-    repaintAgain = false;
-    restoreRepaint();
-  }
-
-  function startRepaint(): void {
-    if (disposed || restoreStyle) return;
-    const original = article.getAttribute("style");
-    const transform = view.getComputedStyle(article).transform;
-    restoreStyle = () => {
-      if (original === null) article.removeAttribute("style");
-      else article.setAttribute("style", original);
-    };
-    // WebKit can leave fractional highlight edges painted even after clear/add.
-    article.style.setProperty("transform", `${transform && transform !== "none" ? `${transform} ` : ""}translateZ(0)`, "important");
-    restoreFrame = view.requestAnimationFrame(() => {
-      restoreFrame = undefined;
-      if (disposed) return;
-      restoreRepaint();
-      if (repaintAgain) {
-        repaintAgain = false;
-        startRepaint();
-      }
-    });
-  }
-
-  function requestRepaint(inAnimationFrame: boolean): void {
-    if (disposed) return;
-    if (restoreStyle) {
-      if (!inAnimationFrame) repaintAgain = true;
-      return;
-    }
-    if (inAnimationFrame) {
-      if (repaintFrame !== undefined) view.cancelAnimationFrame(repaintFrame);
-      repaintFrame = undefined;
-      startRepaint();
-    } else if (repaintFrame === undefined) {
-      repaintFrame = view.requestAnimationFrame(() => {
-        repaintFrame = undefined;
-        startRepaint();
-      });
-    }
   }
 
   function ensureFresh(): boolean {
@@ -440,15 +382,10 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
     return ranges.length - 1;
   }
 
-  function paint(inAnimationFrame = false): void {
+  function paint(): void {
     if (!panel.hidden) count.textContent = `${index + 1}/${ranges.length}${truncated ? "+" : ""}`;
-    if (options.highlights) {
-      const { registry } = options.highlights;
-      const previous = (registry.get("mjp-search")?.size ?? 0) + (registry.get("mjp-search-current")?.size ?? 0);
-      const visible = shown ? ranges : [];
-      updateHighlights(options.highlights, visible, index);
-      if (previous || visible.length) requestRepaint(inAnimationFrame);
-    } else if (!shown) clearSelection();
+    if (options.highlights) updateHighlights(options.highlights, shown ? ranges : [], index);
+    else if (!shown) clearSelection();
     schedulePosition();
   }
 
@@ -544,7 +481,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
         frame = undefined;
         if (disposed || panel.hidden) return;
         ensureFresh();
-        paint(true);
+        paint();
         reveal();
       });
     }
@@ -638,7 +575,6 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       disposed = true;
       origin = undefined;
       cancelSearch();
-      cancelRepaint();
       shown = false;
       panel.hidden = true;
       paint();

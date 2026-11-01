@@ -13,8 +13,18 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: auto; }
 #document:focus { outline: none; }
-::highlight(mjp-search) { color: #24292f; background-color: #ffed99; }
-::highlight(mjp-search-current) { color: #24292f; background-color: #ffb347; }
+::highlight(mjp-search) {
+  color: #6f42c1;
+  text-decoration-line: underline;
+  text-decoration-color: #6f42c1;
+  text-decoration-thickness: 1px;
+}
+::highlight(mjp-search-current) {
+  color: #9a4600;
+  text-decoration-line: underline;
+  text-decoration-color: #9a4600;
+  text-decoration-thickness: 2px;
+}
 body { margin: 0; }
 #status {
   position: sticky;
@@ -235,6 +245,8 @@ body { margin: 0; }
     --surface: #282c32;
     --link: #72b7ff;
   }
+  ::highlight(mjp-search) { color: #c8a8ff; text-decoration-color: #c8a8ff; }
+  ::highlight(mjp-search-current) { color: #ffb454; text-decoration-color: #ffb454; }
   #status { color: #ffe2a3; background: #4c3b20; border-color: #7d6032; }
   .copy-tooltip { color: #ffffff; background: #3d444d; }
   .code-actions button[data-state="success"] { color: #3fb950; }
