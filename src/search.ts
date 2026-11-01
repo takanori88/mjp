@@ -424,10 +424,20 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
     close(): void {
       if (disposed) return;
       cancelSearch();
-      panel.hidden = true;
-      shown = false;
-      origin = undefined;
+      const previous = panel.hidden ? undefined : origin;
+      if (previous) {
+        query = previous.query;
+        input.value = query;
+        matchesStale = true;
+        queryChanged = false;
+        ensureFresh();
+        index = retain(previous.index, ranges.length);
+        shown = previous.shown;
+      } else shown = false;
       paint();
+      if (previous) view.scrollTo(0, previous.scrollY);
+      panel.hidden = true;
+      origin = undefined;
       focusKeepingSelection(article);
     },
     move(direction: 1 | -1): boolean {

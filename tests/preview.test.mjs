@@ -109,6 +109,139 @@ function matchTops(f, tops) {
   });
 }
 
+async function editPriorSearch(f, shown = true) {
+  const controls = await openFind(f, 'old old old new new');
+  typeFind(f, controls.input, 'old');
+  f.key('Enter', {}, controls.input);
+  f.key('n');
+  if (!shown) f.key('Escape');
+  f.window.scrollY = 180;
+  f.key('f', { metaKey: true });
+  f.by.mock.resetCalls();
+  f.to.mock.resetCalls();
+  f.to.mock.mockImplementation((_x, y) => { f.window.scrollY = y; });
+  return controls;
+}
+
+for (const shown of [false, true]) {
+  for (const execute of [false, true]) {
+    test(`cancels ${execute ? 'executed' : 'queued'} edits back to the prior query, index, visibility=${shown}, and scroll`, async t => {
+      const f = await setup(t);
+      const { panel, input } = await editPriorSearch(f, shown);
+      queueFind(f, input, 'new');
+      if (execute) f.frame();
+      f.window.scrollY = 900;
+      f.key('Escape', {}, input);
+      assert.equal(input.value, 'old');
+      assert.equal(panel.hidden, true);
+      assert.equal(f.window.scrollY, 180);
+      assert.deepEqual(f.to.mock.calls.map(call => call.arguments), [[0, 180]]);
+      assert.equal(f.window.document.activeElement, f.article);
+      assert.equal(f.calls.includes('close'), false);
+      assert.equal(f.frames.size, 0);
+      if (shown) {
+        assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['old', 'old', 'old']);
+        assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
+      } else assert.equal(f.registry.size, 0);
+      const current = f.registry.get('mjp-search-current');
+      f.frame();
+      assert.equal(f.registry.get('mjp-search-current'), current);
+      assert.equal(f.by.mock.callCount(), 0);
+      if (!shown) {
+        f.key('n');
+        assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+      }
+    });
+  }
+}
+
+for (const [text, count, offset] of [['old new old', 2, 8], ['new old', 1, 4], ['new new', 0, -1]]) {
+  test(`cancels against replacement content with ${count} remaining prior-query matches`, async t => {
+    const f = await setup(t);
+    const { panel, input } = await editPriorSearch(f);
+    typeFind(f, input, 'new');
+    f.setSnapshot(snapshot(text, 2));
+    await f.changed();
+    f.to.mock.resetCalls();
+    f.key('Escape', {}, input);
+    assert.equal(panel.hidden, true);
+    assert.equal(input.value, 'old');
+    assert.deepEqual(f.to.mock.calls.map(call => call.arguments), [[0, 180]]);
+    assert.equal(f.by.mock.callCount(), 0);
+    if (count) {
+      assert.equal(f.registry.get('mjp-search').size, count);
+      const range = [...f.registry.get('mjp-search-current')][0];
+      assert.equal(range.toString(), 'old');
+      assert.equal(range.startOffset, offset);
+      assert.equal(range.startContainer, f.article.querySelector('p').firstChild);
+    } else {
+      assert.equal(f.registry.size, 0);
+      f.key('f', { metaKey: true });
+      assert.equal(panel.querySelector('[aria-live]').textContent, '0/0');
+    }
+  });
+}
+
+for (const action of ['refocus', 'zero-result Enter']) {
+  test(`preserves the original cancellation state through ${action}`, async t => {
+    const f = await setup(t);
+    const { panel, input } = await editPriorSearch(f);
+    f.window.scrollY = 700;
+    typeFind(f, input, action === 'refocus' ? 'new' : 'missing');
+    if (action === 'refocus') f.key('f', { metaKey: true }, input);
+    else f.key('Enter', {}, input);
+    assert.equal(panel.hidden, false);
+    f.key('Escape', {}, input);
+    assert.equal(input.value, 'old');
+    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
+    assert.equal(f.window.scrollY, 180);
+    assert.equal(f.calls.includes('close'), false);
+  });
+}
+
+test('Escape cancels to visible prior marks, then clears marks, then closes the window', async t => {
+  const f = await setup(t);
+  const { panel, input } = await editPriorSearch(f);
+  typeFind(f, input, 'new');
+  f.key('Escape', {}, input);
+  assert.equal(panel.hidden, true);
+  assert.equal([...f.registry.get('mjp-search-current')][0].toString(), 'old');
+  assert.equal(f.calls.includes('close'), false);
+  f.key('Escape');
+  assert.equal(f.registry.size, 0);
+  assert.equal(f.calls.includes('close'), false);
+  assert.equal(input.value, 'old');
+  f.key('Escape');
+  assert.equal(f.calls.filter(call => call === 'close').length, 1);
+});
+
+test('Escape cancels to hidden prior marks and the following Escape closes immediately', async t => {
+  const f = await setup(t);
+  const { input } = await editPriorSearch(f, false);
+  typeFind(f, input, 'new');
+  f.key('Escape', {}, input);
+  assert.equal(input.value, 'old');
+  assert.equal(f.registry.size, 0);
+  assert.equal(f.calls.includes('close'), false);
+  f.key('Escape');
+  assert.equal(f.calls.filter(call => call === 'close').length, 1);
+});
+
+for (const [key, options] of [['q', {}], ['w', { metaKey: true }], ['W', { metaKey: true }]]) {
+  for (const shown of [false, true]) {
+    test(`${options.metaKey ? 'Cmd+' : ''}${key} closes directly with confirmed marks visible=${shown}`, async t => {
+      const f = await setup(t);
+      const { input } = await openFind(f);
+      typeFind(f, input, 'one');
+      f.key('Enter', {}, input);
+      if (!shown) f.key('Escape');
+      assert.equal(f.calls.includes('close'), false);
+      f.key(key, options);
+      assert.equal(f.calls.filter(call => call === 'close').length, 1);
+    });
+  }
+}
+
 for (const [scrollY, expectedOffset, expectedCount] of [[150, 4, '2/3'], [200, 4, '2/3'], [500, 0, '1/3']]) {
   test(`selects the first match at or after the opening origin ${scrollY}, wrapping if needed`, async t => {
     const f = await setup(t);
@@ -351,18 +484,20 @@ for (const shiftKey of [false, true]) {
   });
 }
 
-test('reopens with the latest query after Escape cancels a queued search without scrolling', async t => {
+test('reopens with the confirmed query after Escape discards a queued edit without search scrolling', async t => {
   const f = await setup(t);
   const { panel, input, count } = await openFind(f, 'old old new new new');
   typeFind(f, input, 'old');
+  f.key('Enter', {}, input);
+  f.key('f', { metaKey: true });
   queueFind(f, input, 'new');
   f.key('Escape', {}, input);
   f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
   f.key('f', { metaKey: true });
   assert.equal(panel.hidden, false);
-  assert.equal(count.textContent, '1/3');
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
-  assert.equal(input.value, 'new');
+  assert.equal(count.textContent, '1/2');
+  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
+  assert.equal(input.value, 'old');
   assert.equal(f.by.mock.callCount(), 0);
   assert.equal(f.frames.size, 0);
   f.frame();
@@ -383,6 +518,7 @@ for (const fallback of [false, true]) {
     assert.equal(f.frames.size, 0);
     f.frame();
     assert.equal(panel.hidden, true);
+    assert.equal(input.value, '');
     assert.equal(f.by.mock.callCount(), 0);
     assert.equal(set.mock.callCount(), 0);
     assert.equal(f.registry.size, 0);
@@ -390,56 +526,62 @@ for (const fallback of [false, true]) {
   });
 
   for (const key of ['n', 'N']) {
-    test(`uses the latest canceled query for ${key} with ${display}`, async t => {
+    test(`uses the restored query for ${key} after canceling an edit with ${display}`, async t => {
       const f = await setup(t);
       if (fallback) f.window.CSS.highlights = undefined;
       const { panel, input } = await openFind(f, 'old old new new new');
       typeFind(f, input, 'old');
+      f.key('Enter', {}, input);
+      f.key('f', { metaKey: true });
       queueFind(f, input, 'new');
       f.key('Escape', {}, input);
-      f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
       f.key(key);
       const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
-      assert.equal(range.toString(), 'new');
-      assert.equal(range.startOffset, key === 'n' ? 8 : 16);
+      assert.equal(range.toString(), 'old');
+      assert.equal(range.startOffset, 4);
       assert.equal(panel.hidden, true);
-      assert.equal(f.by.mock.callCount(), 1);
+      assert.equal(f.by.mock.callCount(), 0);
       f.frame();
-      assert.equal(f.by.mock.callCount(), 1);
+      assert.equal(f.by.mock.callCount(), 0);
     });
 
-    test(`keeps a pending query change across hidden replacement before ${key} with ${display}`, async t => {
+    test(`keeps the restored query across hidden replacement before ${key} with ${display}`, async t => {
       const f = await setup(t);
       if (fallback) f.window.CSS.highlights = undefined;
       const { panel, input } = await openFind(f, 'old old new new new');
       typeFind(f, input, 'old');
+      f.key('Enter', {}, input);
+      f.key('f', { metaKey: true });
       queueFind(f, input, 'new');
       f.key('Escape', {}, input);
-      f.setSnapshot(snapshot('new and old and new', 2));
+      f.key('Escape');
+      f.setSnapshot(snapshot('new and old and old', 2));
       await f.changed();
       assert.equal(f.registry.size, 0);
       f.key(key);
       const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
-      assert.equal(range.toString(), 'new');
-      assert.equal(range.startOffset, key === 'n' ? 0 : 16);
+      assert.equal(range.toString(), 'old');
+      assert.equal(range.startOffset, 16);
       assert.equal(range.startContainer, f.article.querySelector('p').firstChild);
       assert.equal(panel.hidden, true);
     });
   }
 
-  test(`does nothing on n after an emptied query is canceled with ${display}`, async t => {
+  test(`restores the confirmed query when an empty edit is canceled with ${display}`, async t => {
     const f = await setup(t);
     if (fallback) f.window.CSS.highlights = undefined;
     const { panel, input } = await openFind(f, 'old old new new new');
     typeFind(f, input, 'old');
+    f.key('Enter', {}, input);
+    f.key('f', { metaKey: true });
     queueFind(f, input, '');
     f.key('Escape', {}, input);
-    f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
     f.key('n');
     f.frame();
     assert.equal(panel.hidden, true);
-    assert.equal(f.registry.size, 0);
-    assert.equal(f.window.getSelection().toString(), '');
+    const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+    assert.equal(range.toString(), 'old');
+    assert.equal(range.startOffset, 4);
     assert.equal(f.by.mock.callCount(), 0);
   });
 }
@@ -531,6 +673,8 @@ for (const missing of ['CSS', 'highlights', 'Highlight']) {
     assert.equal(f.key('c', { metaKey: true }).defaultPrevented, false);
     f.key('f', { metaKey: true });
     f.key('Escape', {}, input);
+    f.key('Escape');
+    assert.equal(f.calls.includes('close'), false);
     assert.equal(selection.rangeCount, 0);
     assert.equal(f.registry.size, 0);
   });
@@ -787,7 +931,7 @@ test('leaves Enter and Escape to IME composition while search is open', async t 
   }
 });
 
-test('closes only search on Escape and returns focus without moving the document', async t => {
+test('cancels search on Escape and restores the opening scroll before returning focus', async t => {
   const f = await setup(t);
   const { panel, input } = await openFind(f);
   typeFind(f, input, 'one');
@@ -795,13 +939,14 @@ test('closes only search on Escape and returns focus without moving the document
   const focus = t.mock.method(f.article, 'focus');
   assert.equal(f.key('Escape', {}, input).defaultPrevented, true);
   assert.equal(panel.hidden, true);
+  assert.equal(input.value, '');
   assert.equal(f.registry.has('mjp-search'), false);
   assert.equal(f.registry.has('mjp-search-current'), false);
   assert.equal(f.calls.includes('close'), false);
   assert.deepEqual(focus.mock.calls[0].arguments, [{ preventScroll: true }]);
   assert.equal(f.window.document.activeElement, f.article);
   assert.equal(f.by.mock.callCount(), 0);
-  assert.equal(f.to.mock.callCount(), 0);
+  assert.deepEqual(f.to.mock.calls.map(call => call.arguments), [[0, 0]]);
   assert.equal(f.key('j').defaultPrevented, true);
   assert.equal(f.by.mock.callCount(), 1);
   assert.equal(f.key('Escape').defaultPrevented, true);
@@ -936,7 +1081,8 @@ test('rebuilds hidden results on navigation after replacement without reopening 
   const f = await setup(t);
   const { panel, input } = await openFind(f);
   typeFind(f, input, 'one');
-  f.key('Escape', {}, input);
+  f.key('Enter', {}, input);
+  f.key('Escape');
   f.setSnapshot(snapshot('one and one', 2));
   await f.changed();
   assert.equal(f.registry.size, 0);
