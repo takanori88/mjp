@@ -53,7 +53,7 @@ export function createDocumentRenderer(
   mark?: (stage: string) => void,
   readImage?: ReadImage,
   writeText?: WriteText,
-): (snapshot: Snapshot) => void {
+): (snapshot: Snapshot) => boolean {
   const view = article.ownerDocument.defaultView!;
   let lastRevision = -1;
   let lastText: string | null = null;
@@ -64,8 +64,8 @@ export function createDocumentRenderer(
     disposeImages();
     disposeCopyButtons();
   });
-  return function render(snapshot: Snapshot): void {
-    if (snapshot.revision < lastRevision) return;
+  return function render(snapshot: Snapshot): boolean {
+    if (snapshot.revision < lastRevision) return false;
     lastRevision = snapshot.revision;
     const plainText = snapshot.text === lastText ? lastPlainText :
       snapshot.text.length > MAX_MARKDOWN_BYTES ||
@@ -75,7 +75,7 @@ export function createDocumentRenderer(
     status.hidden = !message;
     status.textContent = message ?? "";
 
-    if (snapshot.text === lastText) return;
+    if (snapshot.text === lastText) return false;
     disposeImages();
     disposeCopyButtons();
     const scrollY = view.scrollY;
@@ -126,5 +126,6 @@ export function createDocumentRenderer(
       const stage = snapshot.revision === 0 ? "first_render" : "reload_render";
       view.requestAnimationFrame(() => view.requestAnimationFrame(() => mark(stage)));
     }
+    return true;
   };
 }

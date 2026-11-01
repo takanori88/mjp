@@ -22,6 +22,43 @@ const patterns = {
   links: '[example](https://example.invalid/) '.repeat(16) + '\n\n',
 };
 
+for (const [mode, text] of [
+  ['formatted', '# Initial'],
+  ['plain', 'x'.repeat(MAX_MARKDOWN_BYTES + 1)],
+  ['empty', ''],
+]) {
+  test(`reports replacement only when ${mode} document content changes`, () => {
+    const { article, status, render } = setup();
+    assert.equal(render(snapshot(text)), true);
+    const content = [...article.childNodes];
+
+    assert.equal(render(snapshot(text, 1, 'Cannot read file')), false);
+    assert.equal(status.textContent, 'Cannot read file');
+    assert.deepEqual([...article.childNodes], content);
+
+    assert.equal(render(snapshot(text, 2, null, 'Live reload unavailable')), false);
+    assert.equal(status.textContent, 'Live reload unavailable');
+    assert.deepEqual([...article.childNodes], content);
+
+    assert.equal(render(snapshot('Older content', 1, 'Older error')), false);
+    assert.equal(status.textContent, 'Live reload unavailable');
+    assert.deepEqual([...article.childNodes], content);
+
+    assert.equal(render(snapshot(`${text} updated`, 3)), true);
+    assert.notEqual(article.firstChild, content[0]);
+  });
+}
+
+test('reports replacement when switching between Markdown and plain text', () => {
+  const { article, render } = setup();
+  assert.equal(render(snapshot('# Title')), true);
+  assert.ok(article.querySelector('h1'));
+  assert.equal(render(snapshot('x'.repeat(MAX_MARKDOWN_BYTES + 1), 1)), true);
+  assert.equal(article.firstElementChild.tagName, 'PRE');
+  assert.equal(render(snapshot('# Smaller', 2)), true);
+  assert.equal(article.querySelector('h1').textContent, 'Smaller');
+});
+
 for (const [kind, pattern] of Object.entries(patterns)) {
   for (const size of [MAX_MARKDOWN_BYTES, MAX_MARKDOWN_BYTES + 1]) {
     test(`uses the selected display mode for ${kind} at ${size} bytes`, () => {
