@@ -72,7 +72,7 @@ The CLI starts with one preview in its own process. Normal Finder launches are e
 
 ### Finding text
 
-Search follows Vim-style controls. Colored boxes mark matches over the text, with a stronger color for the current match. Opening search saves your reading position. Typing updates the matches and scrolls to the first match at or after the top of that saved reading area, accounting for the banner and search panel; if none remains, it wraps to the first match. Reopening an existing query also selects from your new reading position.
+Search follows Vim-style controls. Colored boxes mark matches over the text, with a stronger color for the current match. Opening search saves your reading position. Typing updates the matches and moves to the first match at or after the top of that saved reading area, accounting for the banner and search panel; if none remains, it wraps to the first match. Reopening an existing query also selects from your new reading position. When the current match is near the top or bottom edge or out of view, search scrolls it to the middle of the window.
 
 Enter confirms the current match, closes the panel, and returns focus to the document. Highlights stay visible, with a count badge such as `[3/12]` at the end of the current matching line. A query with no matches stays editable as `0/0`; an empty query closes search and clears its marks. While open, the panel shows the current position and count. Search keeps the first 1000 matches: exactly 1000 shows `3/1000`, while more shows `3/1000+` (or `[3/1000+]` in the badge); navigation wraps within those stored matches.
 

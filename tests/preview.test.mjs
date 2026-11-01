@@ -18,7 +18,7 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
   let frameNumber = 0;
   window.requestAnimationFrame = callback => { frames.set(++frameNumber, callback); return frameNumber; };
   window.cancelAnimationFrame = id => { frames.delete(id); };
-  let matchRect = { top: 100, bottom: 120, left: 100, right: 140, width: 40, height: 20 };
+  let matchRect = { top: 200, bottom: 220, left: 100, right: 140, width: 40, height: 20 };
   window.Range.prototype.getBoundingClientRect = function () {
     return typeof matchRect === 'function' ? matchRect(this) : matchRect;
   };
@@ -175,7 +175,7 @@ test(`shows a sibling count badge after confirmation and navigation using overla
   assert.equal(f.badge.getAttribute('aria-live'), 'polite');
   assert.equal(f.badge.parentElement, f.article.parentElement);
   assert.equal(f.badge.style.left, '148px');
-  assert.equal(f.badge.style.top, '100px');
+  assert.equal(f.badge.style.top, '200px');
   f.key('n');
   f.frame();
   assert.equal(f.badge.textContent, '[2/3]');
@@ -391,7 +391,7 @@ async function confirmFindAt(f, index) {
         const f = await setup(t);
         const { panel } = await confirmFindAt(f, current);
         if (!shown) f.key('Escape');
-        matchTops(f, { 0: 100, 4: 300, 8: 500, 12: 900 });
+        matchTops(f, { 0: 100, 4: 280, 8: 500, 12: 900 });
         f.window.scrollY = scrollY;
         f.by.mock.resetCalls();
         assert.equal(f.key(key).defaultPrevented, true);
@@ -444,7 +444,7 @@ async function confirmFindAt(f, index) {
 }
 
 for (const [position, tops, key, expected, scrolls = false] of [
-  ['inside', [0, 100, 200, 300], 'n', 2], ['inside', [0, 100, 200, 300], 'N', 0],
+  ['inside', [0, 100, 200, 300], 'n', 2], ['inside', [0, 100, 200, 300], 'N', 0, true],
   ['at the top', [-100, 0, 100, 200], 'n', 2], ['at the top', [-100, 0, 100, 200], 'N', 0, true],
   ['at the bottom', [100, 380, 500, 700], 'n', 2, true], ['at the bottom', [100, 380, 500, 700], 'N', 0],
   ['partly above', [-100, -10, 100, 500], 'n', 2], ['partly above', [-100, -10, 100, 500], 'N', 2],
@@ -475,7 +475,7 @@ for (const key of ['n', 'N']) {
       f.key(key);
       const expected = key === 'N' ? 3 : obstacle === 'visible banner' ? 2 : 1;
       assert.equal(drawnRanges(f).current[0].startOffset, expected * 4);
-      assert.equal(f.by.mock.callCount(), 0);
+      assert.equal(f.by.mock.callCount(), 1);
     });
   }
 }
@@ -1309,8 +1309,8 @@ test('recovers the first result after a replacement changes zero matches to some
   assert.equal(count.textContent, '1/2');
 });
 
-for (const [top, expectedScroll] of [[100, 0], [-20, -410], [900, 510]]) {
-  test(`scrolls only when the current match is outside the viewport at y=${top}`, async t => {
+for (const [top, expectedScroll] of [[220, 0], [400, 0], [560, 0], [100, -290], [650, 260], [-20, -410], [900, 510]]) {
+  test(`centers the current match only when it is outside the middle half of the viewport at y=${top}`, async t => {
     const f = await setup(t);
     const { input } = await openFind(f);
     Object.defineProperty(f.window, 'innerHeight', { value: 800 });
@@ -1346,7 +1346,7 @@ test('does not scroll a visible match beside the search panel or beneath a hidde
   panel.getBoundingClientRect = () => ({ top: 12, bottom: 60, left: 600, right: 800, width: 200, height: 48 });
   f.status.hidden = true;
   f.status.getBoundingClientRect = () => ({ top: 0, bottom: 60, left: 0, right: 800, width: 800, height: 60 });
-  f.setMatchRect({ top: 20, bottom: 40, left: 100, right: 140, width: 40, height: 20 });
+  f.setMatchRect({ top: 230, bottom: 250, left: 100, right: 140, width: 40, height: 20 });
   typeFind(f, input, 'one');
   assert.equal(f.by.mock.callCount(), 0);
 });
@@ -1361,12 +1361,12 @@ for (const [kind, text, selector] of [
       const { input } = await openFind(f, text);
       const scroller = f.article.querySelector(selector);
       scroller.style.overflowX = 'auto';
-      scroller.getBoundingClientRect = () => ({ top: 80, bottom: 140, left: 50, right: 150, width: 100, height: 60 });
+      scroller.getBoundingClientRect = () => ({ top: 280, bottom: 340, left: 50, right: 150, width: 100, height: 60 });
       Object.defineProperty(scroller, 'clientWidth', { value: 100 });
       scroller.scrollLeft = initialScroll;
       f.setMatchRect(() => {
         const left = contentLeft - scroller.scrollLeft;
-        return { top: 100, bottom: 120, left, right: left + 40, width: 40, height: 20 };
+        return { top: 300, bottom: 320, left, right: left + 40, width: 40, height: 20 };
       });
       typeFind(f, input, 'one');
       assert.equal(scroller.scrollLeft, expectedScroll);

@@ -214,7 +214,9 @@ function revealMatch(range: Range, article: HTMLElement, overlays: HTMLElement[]
   }
 
   const { rect: match, top, obscured } = matchViewport(range, view, overlays);
-  if (match.top < 0 || match.bottom > view.innerHeight || obscured) {
+  // Matches near an edge are recentered too, so the lines around them stay readable.
+  const margin = (view.innerHeight - top) / 4;
+  if (match.top < top + margin || match.bottom > view.innerHeight - margin || obscured) {
     view.scrollBy(0, (match.top + match.bottom) / 2 - (top + view.innerHeight) / 2);
   }
 }
