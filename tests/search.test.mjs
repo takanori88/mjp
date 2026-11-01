@@ -127,7 +127,7 @@ for (const [query, result, open, shown] of [
       assert.equal(article.parentElement.querySelector('.search-count').textContent, '[1/3]');
     } else assert.equal(frame, undefined);
     assert.equal(window.document.activeElement, open ? controller.input : article);
-    if (result === 'committed') assert.equal(highlights.registry.get('mjp-search-current')[0].startOffset, 0);
+    if (result === 'committed') assert.equal([...highlights.registry.get('mjp-search-current')][0].startOffset, 0);
     if (result === 'empty') assert.equal(article.parentElement.querySelector('[role="search"] [aria-live]').textContent, '0/0');
   });
 }
@@ -257,11 +257,90 @@ function fakeHighlights() {
   const registry = new Map();
   const created = [];
   return { registry, created, create(ranges) {
-    const highlight = [...ranges];
+    const highlight = new Set(ranges);
     created.push(highlight);
     return highlight;
   } };
 }
+
+test('retains registered highlights while incremental queries replace every old Range', t => {
+  const { article } = articleFixture(t, '<p>yes yazi yard yazi</p>');
+  const segments = search.collectSegments(article);
+  const highlights = fakeHighlights();
+  const set = t.mock.method(highlights.registry, 'set');
+  const remove = t.mock.method(highlights.registry, 'delete');
+  const first = rangesFor(segments, 'y');
+  search.updateHighlights(highlights, first, 0);
+  const all = highlights.registry.get('mjp-search');
+  const current = highlights.registry.get('mjp-search-current');
+  let previous = first;
+  for (const query of ['ya', 'yaz', 'yazi']) {
+    const ranges = rangesFor(segments, query);
+    search.updateHighlights(highlights, ranges, 1);
+    assert.equal(highlights.registry.get('mjp-search'), all);
+    assert.equal(highlights.registry.get('mjp-search-current'), current);
+    assert.deepEqual([...all], ranges);
+    assert.deepEqual([...current], [ranges[1]]);
+    for (const range of previous) {
+      assert.equal(all.has(range), false);
+      assert.equal(current.has(range), false);
+    }
+    previous = ranges;
+  }
+  search.updateHighlights(highlights, previous, 0);
+  assert.equal(highlights.registry.get('mjp-search-current'), current);
+  assert.deepEqual([...current], [previous[0]]);
+  assert.equal(current.priority, 1);
+  assert.equal(highlights.created.length, 2);
+  assert.equal(set.mock.callCount(), 2);
+  assert.equal(remove.mock.callCount(), 0);
+});
+
+test('clears hidden or zero-result highlights and reuses their registrations when results return', t => {
+  const { article } = articleFixture(t, '<p>yes yazi yard yazi</p>');
+  const segments = search.collectSegments(article);
+  const highlights = fakeHighlights();
+  const first = rangesFor(segments, 'y');
+  search.updateHighlights(highlights, first, 0);
+  const all = highlights.registry.get('mjp-search');
+  const current = highlights.registry.get('mjp-search-current');
+  for (let cycle = 0; cycle < 2; cycle++) {
+    search.updateHighlights(highlights, [], -1);
+    assert.equal(highlights.registry.get('mjp-search'), all);
+    assert.equal(highlights.registry.get('mjp-search-current'), current);
+    assert.equal(all.size, 0);
+    assert.equal(current.size, 0);
+    const ranges = rangesFor(segments, cycle ? 'yazi' : 'ya');
+    search.updateHighlights(highlights, ranges, 1);
+    assert.equal(highlights.registry.get('mjp-search'), all);
+    assert.equal(highlights.registry.get('mjp-search-current'), current);
+    assert.deepEqual([...all], ranges);
+    assert.deepEqual([...current], [ranges[1]]);
+    assert.equal(first.some(range => all.has(range) || current.has(range)), false);
+  }
+  assert.equal(highlights.created.length, 2);
+});
+
+test('retains initially empty highlights and clears only the current contents for an invalid index', t => {
+  const { article } = articleFixture(t, '<p>yazi yazi</p>');
+  const highlights = fakeHighlights();
+  search.updateHighlights(highlights, [], -1);
+  const all = highlights.registry.get('mjp-search');
+  const current = highlights.registry.get('mjp-search-current');
+  assert.ok(all);
+  assert.ok(current);
+  assert.equal(all.size, 0);
+  assert.equal(current.size, 0);
+  const ranges = rangesFor(search.collectSegments(article), 'yazi');
+  for (const index of [0, -1, ranges.length]) {
+    search.updateHighlights(highlights, ranges, index);
+    assert.equal(highlights.registry.get('mjp-search'), all);
+    assert.equal(highlights.registry.get('mjp-search-current'), current);
+    assert.deepEqual([...all], ranges);
+    assert.deepEqual([...current], index === 0 ? [ranges[0]] : []);
+  }
+  assert.equal(highlights.created.length, 2);
+});
 
 test('registers all matches and the current match without changing any document nodes', t => {
   const { article } = articleFixture(t, '<p>Ｆ<em>o</em>o foo</p><pre><code>FOO</code></pre>');
@@ -272,18 +351,20 @@ test('registers all matches and the current match without changing any document 
   search.updateHighlights(highlights, ranges, 1);
   const all = highlights.registry.get('mjp-search');
   const current = highlights.registry.get('mjp-search-current');
-  assert.deepEqual(all.map(range => range.toString()), ['Ｆoo', 'foo', 'FOO']);
-  assert.deepEqual([...current], [all[1]]);
+  assert.deepEqual([...all].map(range => range.toString()), ['Ｆoo', 'foo', 'FOO']);
+  assert.deepEqual([...current], [ranges[1]]);
   assert.equal(current.priority, 1);
-  assert.equal(all[0].startContainer, article.querySelector('p').firstChild);
-  assert.equal(all[0].startOffset, 0);
-  assert.equal(all[0].endContainer, article.querySelector('em').nextSibling);
-  assert.equal(all[0].endOffset, 1);
+  assert.equal(ranges[0].startContainer, article.querySelector('p').firstChild);
+  assert.equal(ranges[0].startOffset, 0);
+  assert.equal(ranges[0].endContainer, article.querySelector('em').nextSibling);
+  assert.equal(ranges[0].endOffset, 1);
   search.updateHighlights(highlights, ranges, 2);
-  assert.deepEqual([...highlights.registry.get('mjp-search-current')], [all[2]]);
+  assert.deepEqual([...highlights.registry.get('mjp-search-current')], [ranges[2]]);
   search.updateHighlights(highlights, [], -1);
-  assert.equal(highlights.registry.has('mjp-search'), false);
-  assert.equal(highlights.registry.has('mjp-search-current'), false);
+  assert.equal(highlights.registry.get('mjp-search'), all);
+  assert.equal(highlights.registry.get('mjp-search-current'), current);
+  assert.equal(all.size, 0);
+  assert.equal(current.size, 0);
   assert.equal(article.innerHTML, html);
   const after = [...article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]);
   assert.equal(after.length, nodes.length);
@@ -300,8 +381,8 @@ test('creates and registers at most 1000 match Ranges', t => {
     assert.equal(ranges.length, Math.min(count, 1000));
     assert.equal(createRange.mock.callCount(), Math.min(count, 1000));
     search.updateHighlights(highlights, ranges, ranges.length - 1);
-    assert.equal(highlights.registry.get('mjp-search').length, ranges.length);
-    assert.equal(highlights.registry.get('mjp-search-current')[0], ranges.at(-1));
+    assert.equal(highlights.registry.get('mjp-search').size, ranges.length);
+    assert.equal([...highlights.registry.get('mjp-search-current')][0], ranges.at(-1));
     createRange.mock.resetCalls();
   }
 });
@@ -345,7 +426,7 @@ test('search highlighting preserves rendered code copying and external link acti
   const highlights = fakeHighlights();
   const ranges = rangesFor(search.collectSegments(article), 'foo');
   search.updateHighlights(highlights, ranges, 0);
-  assert.deepEqual(highlights.registry.get('mjp-search').map(range => range.toString()), ['foo', 'foo', 'foo']);
+  assert.deepEqual([...highlights.registry.get('mjp-search')].map(range => range.toString()), ['foo', 'foo', 'foo']);
   assert.equal(article.innerHTML, html);
   assert.equal(article.querySelector('code'), code);
   assert.equal(article.querySelector('button'), button);

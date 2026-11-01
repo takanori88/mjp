@@ -87,6 +87,10 @@ test('subscribes before reading and renders subsequent document notifications', 
   assert.equal(f.article.querySelector('h1').textContent, 'Recreated');
 });
 
+function assertNoSearchRanges(registry) {
+  for (const name of ['mjp-search', 'mjp-search-current']) assert.equal(registry.get(name)?.size ?? 0, 0);
+}
+
 async function openFind(f, text = 'one one one', key = '/') {
   f.setSnapshot(snapshot(text, 1));
   await f.changed();
@@ -110,6 +114,62 @@ function typeFind(f, input, value) {
 }
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('typing y through yazi updates registered highlights in place through hiding, redisplay, and replacement', async t => {
+  const f = await setup(t);
+  const { input } = await openFind(f, 'yes yazi yard yazi');
+  const set = t.mock.method(f.registry, 'set');
+  typeFind(f, input, 'y');
+  const all = f.registry.get('mjp-search');
+  const current = f.registry.get('mjp-search-current');
+  let previous = [...all];
+  for (const query of ['ya', 'yaz', 'yazi']) {
+    typeFind(f, input, query);
+    assert.equal(f.registry.get('mjp-search'), all);
+    assert.equal(f.registry.get('mjp-search-current'), current);
+    assert.deepEqual([...all].map(range => range.toString()), query === 'ya' ? ['ya', 'ya', 'ya'] : [query, query]);
+    assert.deepEqual([...current], [[...all][0]]);
+    assert.equal(previous.some(range => all.has(range) || current.has(range)), false);
+    previous = [...all];
+  }
+  f.key('Enter', {}, input);
+  f.key('Escape');
+  assertNoSearchRanges(f.registry);
+  assert.equal(all.size, 0);
+  assert.equal(current.size, 0);
+  f.key('n');
+  assert.equal(f.registry.get('mjp-search'), all);
+  assert.equal(f.registry.get('mjp-search-current'), current);
+  assert.deepEqual([...all].map(range => range.toString()), ['yazi', 'yazi']);
+  assert.deepEqual([...current], [[...all][1]]);
+  previous = [...all];
+  f.setSnapshot(snapshot('new yazi', 2));
+  await f.changed();
+  assert.equal(f.registry.get('mjp-search'), all);
+  assert.equal(f.registry.get('mjp-search-current'), current);
+  assert.equal(all.size, 1);
+  assert.equal(previous.some(range => all.has(range) || current.has(range)), false);
+  assert.equal([...all][0].startContainer, f.article.querySelector('p').firstChild);
+  assert.equal(set.mock.callCount(), 0);
+});
+
+test('clears both registered highlights before unregistering them on page exit', async t => {
+  const f = await setup(t);
+  const { input } = await openFind(f);
+  typeFind(f, input, 'one');
+  const all = f.registry.get('mjp-search');
+  const current = f.registry.get('mjp-search-current');
+  const removed = [];
+  t.mock.method(f.registry, 'delete', name => {
+    removed.push([name, f.registry.get(name).size]);
+    return Map.prototype.delete.call(f.registry, name);
+  });
+  f.window.dispatchEvent(new f.window.Event('pagehide'));
+  assert.deepEqual(removed, [['mjp-search', 0], ['mjp-search-current', 0]]);
+  assert.equal(all.size, 0);
+  assert.equal(current.size, 0);
+  assert.equal(f.registry.size, 0);
+});
 
 const badgeRect = (top, right, left = 100) => ({ top, bottom: top + 20, left, right, width: right - left, height: 20 });
 
@@ -454,7 +514,7 @@ for (const key of ['n', 'N']) {
     await f.changed();
     f.by.mock.resetCalls();
     assert.equal(f.key(key).defaultPrevented, true);
-    assert.equal(f.registry.size, 0);
+    assertNoSearchRanges(f.registry);
     assert.equal(panel.hidden, true);
     assert.equal(f.by.mock.callCount(), 0);
   });
@@ -493,7 +553,7 @@ for (const shown of [false, true]) {
       if (shown) {
         assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['old', 'old', 'old']);
         assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
-      } else assert.equal(f.registry.size, 0);
+      } else assertNoSearchRanges(f.registry);
       const current = f.registry.get('mjp-search-current');
       f.frame();
       assert.equal(f.registry.get('mjp-search-current'), current);
@@ -528,7 +588,7 @@ for (const [text, count, offset] of [['old new old', 2, 8], ['new old', 1, 4], [
       assert.equal(range.startOffset, offset);
       assert.equal(range.startContainer, f.article.querySelector('p').firstChild);
     } else {
-      assert.equal(f.registry.size, 0);
+      assertNoSearchRanges(f.registry);
       f.key('f', { metaKey: true });
       assert.equal(panel.querySelector('[aria-live]').textContent, '0/0');
     }
@@ -561,7 +621,7 @@ test('Escape cancels to visible prior marks, then clears marks, then closes the 
   assert.equal([...f.registry.get('mjp-search-current')][0].toString(), 'old');
   assert.equal(f.calls.includes('close'), false);
   f.key('Escape');
-  assert.equal(f.registry.size, 0);
+  assertNoSearchRanges(f.registry);
   assert.equal(f.calls.includes('close'), false);
   assert.equal(input.value, 'old');
   f.key('Escape');
@@ -574,7 +634,7 @@ test('Escape cancels to hidden prior marks and the following Escape closes immed
   typeFind(f, input, 'new');
   f.key('Escape', {}, input);
   assert.equal(input.value, 'old');
-  assert.equal(f.registry.size, 0);
+  assertNoSearchRanges(f.registry);
   assert.equal(f.calls.includes('close'), false);
   f.key('Escape');
   assert.equal(f.calls.filter(call => call === 'close').length, 1);
@@ -676,7 +736,7 @@ test('releases the opening intent after confirmation so two Escapes clear marks 
   typeFind(f, input, 'one');
   f.key('Enter', {}, input);
   f.key('Escape');
-  assert.equal(f.registry.size, 0);
+  assertNoSearchRanges(f.registry);
   assert.equal(f.calls.includes('close'), false);
   f.key('Escape');
   assert.equal(f.calls.filter(call => call === 'close').length, 1);
@@ -687,7 +747,7 @@ test('closes an empty query and releases the opening intent for the following Es
   const { panel, input } = await openFind(f);
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
-  assert.equal(f.registry.size, 0);
+  assertNoSearchRanges(f.registry);
   assert.equal(f.window.document.activeElement, f.article);
   f.key('Escape');
   assert.equal(f.calls.filter(call => call === 'close').length, 1);
@@ -797,6 +857,7 @@ test('coalesces input into one search of the latest query per frame', async t =>
   const { input, count } = await openFind(f, 'old old new new new');
   const createRange = t.mock.method(f.window.document, 'createRange');
   const set = t.mock.method(f.registry, 'set');
+  const clears = [...f.registry.values()].map(highlight => t.mock.method(highlight, 'clear'));
   f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
   queueFind(f, input, 'old');
   queueFind(f, input, 'ne');
@@ -807,12 +868,14 @@ test('coalesces input into one search of the latest query per frame', async t =>
   assert.equal(count.textContent, '1/3');
   assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['new', 'new', 'new']);
   assert.equal(createRange.mock.callCount(), 3);
-  assert.equal(set.mock.callCount(), 2);
+  assert.equal(set.mock.callCount(), 0);
+  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
   assert.equal(f.by.mock.callCount(), 1);
   assert.equal(f.frames.size, 0);
   f.frame();
   assert.equal(createRange.mock.callCount(), 3);
   assert.equal(f.by.mock.callCount(), 1);
+  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
 });
 
 for (const shiftKey of [false, true]) {
@@ -821,6 +884,7 @@ for (const shiftKey of [false, true]) {
     const { panel, input } = await openFind(f, 'old old new new new');
     typeFind(f, input, 'old');
     const set = t.mock.method(f.registry, 'set');
+    const clears = [...f.registry.values()].map(highlight => t.mock.method(highlight, 'clear'));
     f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
     queueFind(f, input, 'new');
     f.key('Enter', { shiftKey }, input);
@@ -830,10 +894,12 @@ for (const shiftKey of [false, true]) {
     assert.equal(f.window.document.activeElement, f.article);
     assert.equal(f.frames.size, 1);
     assert.equal(f.by.mock.callCount(), 1);
-    assert.equal(set.mock.callCount(), 2);
+    assert.equal(set.mock.callCount(), 0);
+    for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
     f.frame();
     assert.equal(f.by.mock.callCount(), 1);
-    assert.equal(set.mock.callCount(), 2);
+    assert.equal(set.mock.callCount(), 0);
+    for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
     assert.equal(f.window.document.querySelector('.search-count').textContent, '[1/3]');
   });
 }
@@ -875,7 +941,7 @@ for (const fallback of [false, true]) {
     assert.equal(input.value, '');
     assert.equal(f.by.mock.callCount(), 0);
     assert.equal(set.mock.callCount(), 0);
-    assert.equal(f.registry.size, 0);
+    assertNoSearchRanges(f.registry);
     assert.equal(f.window.getSelection().toString(), '');
   });
 
@@ -911,7 +977,7 @@ for (const fallback of [false, true]) {
       f.key('Escape');
       f.setSnapshot(snapshot('new and old and old', 2));
       await f.changed();
-      assert.equal(f.registry.size, 0);
+      assertNoSearchRanges(f.registry);
       f.key(key);
       const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
       assert.equal(range.toString(), 'old');
@@ -945,6 +1011,7 @@ test('absorbs a queued query into one replacement search without requesting scro
   const { input, count } = await openFind(f, 'old old new new new');
   typeFind(f, input, 'old');
   const set = t.mock.method(f.registry, 'set');
+  const clears = [...f.registry.values()].map(highlight => t.mock.method(highlight, 'clear'));
   const createRange = t.mock.method(f.window.document, 'createRange');
   queueFind(f, input, 'new');
   f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
@@ -952,12 +1019,14 @@ test('absorbs a queued query into one replacement search without requesting scro
   await f.changed();
   assert.equal(count.textContent, '1/2');
   assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
-  assert.equal(set.mock.callCount(), 2);
+  assert.equal(set.mock.callCount(), 0);
+  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
   assert.equal(createRange.mock.callCount(), 2);
   assert.equal(f.by.mock.callCount(), 0);
   assert.equal(f.frames.size, 0);
   f.frame();
-  assert.equal(set.mock.callCount(), 2);
+  assert.equal(set.mock.callCount(), 0);
+  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
   assert.equal(createRange.mock.callCount(), 2);
   assert.equal(f.by.mock.callCount(), 0);
 });
@@ -1232,12 +1301,12 @@ test('updates results on input and keeps zero-result queries editable until an e
   assert.equal(count.textContent, '0/0');
   assert.equal(panel.hidden, false);
   assert.equal(f.window.document.activeElement, input);
-  assert.equal(f.registry.has('mjp-search-current'), false);
+  assertNoSearchRanges(f.registry);
   typeFind(f, input, 'one');
   assert.equal(count.textContent, '1/3');
   typeFind(f, input, '');
   assert.equal(count.textContent, '0/0');
-  assert.equal(f.registry.has('mjp-search'), false);
+  assertNoSearchRanges(f.registry);
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
 });
@@ -1294,8 +1363,7 @@ test('cancels search on Escape and restores the opening scroll before returning 
   assert.equal(f.key('Escape', {}, input).defaultPrevented, true);
   assert.equal(panel.hidden, true);
   assert.equal(input.value, '');
-  assert.equal(f.registry.has('mjp-search'), false);
-  assert.equal(f.registry.has('mjp-search-current'), false);
+  assertNoSearchRanges(f.registry);
   assert.equal(f.calls.includes('close'), false);
   assert.deepEqual(focus.mock.calls[0].arguments, [{ preventScroll: true }]);
   assert.equal(f.window.document.activeElement, f.article);
@@ -1338,7 +1406,7 @@ test('n and N do nothing without a search query and never initialize search', as
   f.key('n');
   f.key('N');
   assert.equal(panel.hidden, true);
-  assert.equal(f.registry.size, 0);
+  assertNoSearchRanges(f.registry);
   assert.equal(f.by.mock.callCount(), 0);
 });
 
@@ -1439,7 +1507,7 @@ test('rebuilds hidden results on navigation after replacement without reopening 
   f.key('Escape');
   f.setSnapshot(snapshot('one and one', 2));
   await f.changed();
-  assert.equal(f.registry.size, 0);
+  assertNoSearchRanges(f.registry);
   f.key('n');
   assert.equal(panel.hidden, true);
   assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
@@ -1491,7 +1559,7 @@ test('closes an emptied queued query synchronously on Enter and clears stale mar
   input.dispatchEvent(new f.window.Event('input', { bubbles: true }));
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
-  assert.equal(f.registry.size, 0);
+  assertNoSearchRanges(f.registry);
   assert.equal(f.frames.size, 0);
 });
 

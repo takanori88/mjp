@@ -184,23 +184,28 @@ export function createMatchRanges(segments: SearchSegment[], starts: Match[], qu
 }
 
 export type SearchHighlights = {
-  registry: Pick<HighlightRegistry, "set" | "delete">;
+  registry: Pick<HighlightRegistry, "get" | "set" | "delete">;
   create: (ranges: Range[]) => Highlight;
 };
 
 export function updateHighlights(highlights: SearchHighlights, ranges: Range[], index: number): void {
   const { registry, create } = highlights;
-  if (!ranges.length) {
-    registry.delete("mjp-search");
-    registry.delete("mjp-search-current");
-    return;
+  let all = registry.get("mjp-search");
+  if (!all) {
+    all = create([]);
+    registry.set("mjp-search", all);
   }
-  registry.set("mjp-search", create(ranges));
-  if (ranges[index]) {
-    const current = create([ranges[index]]);
+  let current = registry.get("mjp-search-current");
+  if (!current) {
+    current = create([]);
     current.priority = 1;
     registry.set("mjp-search-current", current);
-  } else registry.delete("mjp-search-current");
+  }
+  // WebKit can leave old ranges painted when a registered Highlight is replaced.
+  all.clear();
+  current.clear();
+  for (const range of ranges) all.add(range);
+  if (ranges[index]) current.add(ranges[index]);
 }
 
 function matchViewport(range: Range, view: Window, overlays: HTMLElement[]) {
@@ -573,6 +578,10 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       shown = false;
       panel.hidden = true;
       paint();
+      if (options.highlights) {
+        options.highlights.registry.delete("mjp-search");
+        options.highlights.registry.delete("mjp-search-current");
+      }
       input.removeEventListener("input", onInput);
       observer?.disconnect();
       view.removeEventListener("resize", schedulePosition);
