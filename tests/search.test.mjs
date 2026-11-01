@@ -58,6 +58,34 @@ function rangesFor(segments, query, limit = search.MAX_MATCHES) {
   return search.createMatchRanges(segments, starts, folded.length);
 }
 
+for (const [query, result, open, shown] of [
+  ['one', 'committed', false, true],
+  ['', 'closed', false, false],
+  ['missing', 'empty', true, true],
+]) {
+  test(`commit returns ${result} for ${JSON.stringify(query)} and exposes its resulting panel state`, t => {
+    const { article, window } = articleFixture(t, '<p>one one one</p>');
+    window.Range.prototype.getBoundingClientRect = () => ({ top: 100, bottom: 120, left: 100, right: 140, width: 40, height: 20 });
+    window.scrollBy = () => {};
+    let frame;
+    window.requestAnimationFrame = callback => { frame = callback; return 1; };
+    window.cancelAnimationFrame = () => { frame = undefined; };
+    const highlights = fakeHighlights();
+    const controller = search.createSearch(article, { highlights });
+    t.after(() => controller.dispose());
+    controller.open();
+    controller.input.value = query;
+    controller.input.dispatchEvent(new window.Event('input'));
+    assert.equal(controller.commit(), result);
+    assert.equal(controller.isOpen, open);
+    assert.equal(controller.isShown, shown);
+    assert.equal(frame, undefined);
+    assert.equal(window.document.activeElement, open ? controller.input : article);
+    if (result === 'committed') assert.equal(highlights.registry.get('mjp-search-current')[0].startOffset, 0);
+    if (result === 'empty') assert.equal(article.previousElementSibling.querySelector('[aria-live]').textContent, '0/0');
+  });
+}
+
 test('collects inline text across emphasis, code, and link nodes in document order', t => {
   const { article } = articleFixture(t, '<p> Ａ<em>b</em><code>C</code><a href="https://example.com">d</a> e </p>');
   const segments = search.collectSegments(article);

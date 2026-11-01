@@ -250,6 +250,8 @@ type SearchOptions = {
   status?: HTMLElement;
 };
 
+type SearchOrigin = { scrollY: number; query: string; index: number; shown: boolean };
+
 export function createSearch(article: HTMLElement, options: SearchOptions = {}) {
   const document = article.ownerDocument;
   const view = document.defaultView!;
@@ -282,6 +284,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   let frame: number | undefined;
   let disposed = false;
   let selected: SelectionState | undefined;
+  let origin: SearchOrigin | undefined;
 
   function cancelSearch(): void {
     if (frame !== undefined) view.cancelAnimationFrame(frame);
@@ -299,11 +302,32 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       const result = findMatches(segments.map(segment => segment.text), folded, MAX_MATCHES);
       ranges = createMatchRanges(segments, result.starts, folded.length);
       truncated = result.truncated;
-      index = retain(queryChanged ? -1 : index, ranges.length);
+      index = queryChanged ? indexFromOrigin() : retain(index, ranges.length);
       matchesStale = false;
       queryChanged = false;
     }
     return changed;
+  }
+
+  function indexFromOrigin(): number {
+    if (!ranges.length) return -1;
+    if (!origin) return 0;
+    const originY = origin.scrollY;
+    const scrollY = view.scrollY;
+    const overlays = options.status ? [panel, options.status] : [panel];
+    const found = ranges.findIndex(range => {
+      const rect = range.getBoundingClientRect();
+      let top = 0;
+      for (const overlay of overlays) {
+        if (overlay.hidden) continue;
+        const bounds = overlay.getBoundingClientRect();
+        if (bounds.bottom > 0 && bounds.top < view.innerHeight && rect.left < bounds.right && rect.right > bounds.left) {
+          top = Math.max(top, bounds.bottom);
+        }
+      }
+      return rect.top + scrollY >= originY + top;
+    });
+    return found === -1 ? 0 : found;
   }
 
   function paint(): void {
@@ -363,22 +387,46 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   return {
     get input(): HTMLInputElement { return input; },
     get isOpen(): boolean { return !panel.hidden; },
+    get isShown(): boolean { return shown; },
     open(): void {
       if (disposed) return;
       cancelSearch();
+      const opening = panel.hidden;
+      if (opening) origin = { scrollY: view.scrollY, query, index, shown };
       panel.hidden = false;
       shown = true;
-      ensureFresh();
+      const changed = ensureFresh();
+      if (opening && !changed) index = indexFromOrigin();
       paint();
       input.value = query;
       focusKeepingSelection(input);
       input.select();
+    },
+    commit(): "committed" | "closed" | "empty" {
+      if (disposed || panel.hidden) return "closed";
+      cancelSearch();
+      ensureFresh();
+      if (query && !ranges.length) {
+        paint();
+        return "empty";
+      }
+      panel.hidden = true;
+      shown = Boolean(query);
+      origin = undefined;
+      paint();
+      focusKeepingSelection(article);
+      if (shown) {
+        selectCurrent();
+        reveal();
+      }
+      return shown ? "committed" : "closed";
     },
     close(): void {
       if (disposed) return;
       cancelSearch();
       panel.hidden = true;
       shown = false;
+      origin = undefined;
       paint();
       focusKeepingSelection(article);
     },
@@ -409,6 +457,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      origin = undefined;
       cancelSearch();
       shown = false;
       panel.hidden = true;

@@ -84,7 +84,7 @@ export async function startPreview(
   document.addEventListener("keydown", (event) => {
     if (
       (event.metaKey && event.key.toLowerCase() === "w") ||
-      (event.key === "Escape" && !search?.isOpen && !searchWanted)
+      (event.key === "Escape" && !search?.isOpen && !search?.isShown && !searchWanted)
     ) {
       event.preventDefault();
       firstGAt = 0;
@@ -124,7 +124,7 @@ export async function startPreview(
     ) {
       event.preventDefault();
       firstGAt = 0;
-      search.move(event.shiftKey ? -1 : 1);
+      if (search.commit() !== "empty") searchWanted = false;
       return;
     }
 
