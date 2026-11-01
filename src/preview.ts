@@ -42,7 +42,7 @@ export async function startPreview(
       search.open();
       return;
     }
-    searchLoading ??= (bridge.loadSearch?.() ?? import("./search.ts")).then(module => {
+    searchLoading ??= Promise.resolve().then(() => bridge.loadSearch?.() ?? import("./search.ts")).then(module => {
       if (disposed) return;
       const highlights = window.CSS?.highlights && typeof window.Highlight === "function"
         ? { registry: window.CSS.highlights, create: (ranges: Range[]) => new window.Highlight(...ranges) }
@@ -50,6 +50,7 @@ export async function startPreview(
       search = module.createSearch(article, { status, highlights });
       if (searchWanted) search.open();
     }).catch(error => {
+      if (disposed) return;
       searchLoading = undefined;
       searchWanted = false;
       status.hidden = false;

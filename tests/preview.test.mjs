@@ -7,7 +7,7 @@ globalThis.window = new JSDOM().window;
 const { startPreview } = await import('../src/preview.ts');
 const snapshot = (text, revision = 0, error = null) => ({ text, revision, error, warning: null });
 
-async function setup(t, deferred = false) {
+async function setup(t, deferred = false, loadSearch = async () => searchModule) {
   const { window } = new JSDOM('<article></article><aside></aside>');
   t.after(() => window.close());
   const article = window.document.querySelector('article');
@@ -36,7 +36,7 @@ async function setup(t, deferred = false) {
     close: async () => { calls.push('close'); },
     openExternal: async url => { calls.push(['open', url]); },
     writeText: async text => { calls.push(['copy', text]); },
-    loadSearch: async () => { calls.push('search'); return searchModule; },
+    loadSearch: () => { calls.push('search'); return loadSearch(); },
   });
   await new Promise(resolve => setImmediate(resolve));
   if (!deferred) await boot;
@@ -88,11 +88,283 @@ async function openFind(f, text = 'one one one', key = '/') {
   return { panel, input: panel.querySelector('input'), count: panel.querySelector('[aria-live="polite"]') };
 }
 
-function typeFind(f, input, value) {
+function queueFind(f, input, value) {
   input.value = value;
   input.dispatchEvent(new f.window.Event('input', { bubbles: true }));
+}
+
+function typeFind(f, input, value) {
+  queueFind(f, input, value);
   f.frame();
 }
+
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('shares one module load and initialization across repeated search shortcuts', async t => {
+  const loading = Promise.withResolvers();
+  const f = await setup(t, false, () => loading.promise);
+  const createSearch = t.mock.fn(searchModule.createSearch);
+  f.key('f', { metaKey: true });
+  f.key('/');
+  f.key('f', { metaKey: true });
+  await settle();
+  assert.equal(f.calls.filter(call => call === 'search').length, 1);
+  assert.equal(createSearch.mock.callCount(), 0);
+  assert.equal(f.window.document.querySelector('[role="search"]'), null);
+  loading.resolve({ ...searchModule, createSearch });
+  await settle();
+  assert.equal(createSearch.mock.callCount(), 1);
+  assert.equal(f.window.document.querySelectorAll('[role="search"]').length, 1);
+  assert.equal(f.window.document.activeElement.type, 'search');
+});
+
+for (const reopen of [false, true]) {
+  test(`applies the latest ${reopen ? 'open' : 'close'} intent when module loading finishes after Escape`, async t => {
+    const loading = Promise.withResolvers();
+    const f = await setup(t, false, () => loading.promise);
+    f.key('f', { metaKey: true });
+    assert.equal(f.key('Escape').defaultPrevented, true);
+    if (reopen) f.key('f', { metaKey: true });
+    loading.resolve(searchModule);
+    await settle();
+    const panel = f.window.document.querySelector('[role="search"]');
+    assert.equal(panel === null || panel.hidden, !reopen);
+    assert.equal(f.calls.filter(call => call === 'search').length, 1);
+    assert.equal(f.calls.includes('close'), false);
+    assert.equal(f.by.mock.callCount(), 0);
+  });
+}
+
+test('never initializes search when its module finishes loading after page exit', async t => {
+  const loading = Promise.withResolvers();
+  const f = await setup(t, false, () => loading.promise);
+  const createSearch = t.mock.fn(searchModule.createSearch);
+  f.key('/');
+  f.window.dispatchEvent(new f.window.Event('pagehide'));
+  loading.resolve({ ...searchModule, createSearch });
+  await settle();
+  f.key('f', { metaKey: true });
+  await settle();
+  assert.equal(createSearch.mock.callCount(), 0);
+  assert.equal(f.window.document.querySelector('[role="search"]'), null);
+  assert.equal(f.registry.size, 0);
+  assert.equal(f.frames.size, 0);
+  assert.equal(f.calls.filter(call => call === 'search').length, 1);
+});
+
+for (const synchronous of [false, true]) {
+  test(`reports ${synchronous ? 'synchronous' : 'asynchronous'} module loading failures and permits a retry`, async t => {
+    let attempts = 0;
+    const f = await setup(t, false, () => {
+      if (++attempts > 1) return Promise.resolve(searchModule);
+      if (synchronous) throw new Error('Search unavailable');
+      return Promise.reject(new Error('Search unavailable'));
+    });
+    f.key('/');
+    await settle();
+    assert.equal(f.status.hidden, false);
+    assert.match(f.status.textContent, /Cannot open search:.*Search unavailable/);
+    assert.equal(f.window.document.querySelector('[role="search"]'), null);
+    f.key('/');
+    await settle();
+    assert.equal(f.calls.filter(call => call === 'search').length, 2);
+    assert.equal(f.window.document.querySelector('[role="search"]').hidden, false);
+  });
+}
+
+test('ignores module loading failures delivered after page exit', async t => {
+  const loading = Promise.withResolvers();
+  const f = await setup(t, false, () => loading.promise);
+  const previous = { hidden: f.status.hidden, text: f.status.textContent };
+  f.key('/');
+  f.window.dispatchEvent(new f.window.Event('pagehide'));
+  loading.reject(new Error('Search unavailable'));
+  await settle();
+  assert.equal(f.status.hidden, previous.hidden);
+  assert.equal(f.status.textContent, previous.text);
+  assert.equal(f.window.document.querySelector('[role="search"]'), null);
+  assert.equal(f.registry.size, 0);
+});
+
+test('coalesces input into one search of the latest query per frame', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f, 'old old new new new');
+  const createRange = t.mock.method(f.window.document, 'createRange');
+  const set = t.mock.method(f.registry, 'set');
+  f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+  queueFind(f, input, 'old');
+  queueFind(f, input, 'ne');
+  queueFind(f, input, 'new');
+  assert.equal(f.frames.size, 1);
+  assert.equal(createRange.mock.callCount(), 0);
+  f.frame();
+  assert.equal(count.textContent, '1/3');
+  assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['new', 'new', 'new']);
+  assert.equal(createRange.mock.callCount(), 3);
+  assert.equal(set.mock.callCount(), 2);
+  assert.equal(f.by.mock.callCount(), 1);
+  assert.equal(f.frames.size, 0);
+  f.frame();
+  assert.equal(createRange.mock.callCount(), 3);
+  assert.equal(f.by.mock.callCount(), 1);
+});
+
+for (const shiftKey of [false, true]) {
+  test(`flushes a queued search before ${shiftKey ? 'Shift+' : ''}Enter and scrolls only to the navigated match`, async t => {
+    const f = await setup(t);
+    const { input, count } = await openFind(f, 'old old new new new');
+    typeFind(f, input, 'old');
+    const set = t.mock.method(f.registry, 'set');
+    f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+    queueFind(f, input, 'new');
+    f.key('Enter', { shiftKey }, input);
+    assert.equal(count.textContent, shiftKey ? '3/3' : '2/3');
+    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, shiftKey ? 16 : 12);
+    assert.equal(f.frames.size, 0);
+    assert.equal(f.by.mock.callCount(), 1);
+    assert.equal(set.mock.callCount(), 2);
+    f.frame();
+    assert.equal(f.by.mock.callCount(), 1);
+    assert.equal(set.mock.callCount(), 2);
+  });
+}
+
+test('reopens with the latest query after Escape cancels a queued search without scrolling', async t => {
+  const f = await setup(t);
+  const { panel, input, count } = await openFind(f, 'old old new new new');
+  typeFind(f, input, 'old');
+  f.key('Enter', {}, input);
+  queueFind(f, input, 'new');
+  f.key('Escape', {}, input);
+  f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+  f.key('f', { metaKey: true });
+  assert.equal(panel.hidden, false);
+  assert.equal(count.textContent, '1/3');
+  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+  assert.equal(input.value, 'new');
+  assert.equal(f.by.mock.callCount(), 0);
+  assert.equal(f.frames.size, 0);
+  f.frame();
+  assert.equal(f.by.mock.callCount(), 0);
+});
+
+for (const fallback of [false, true]) {
+  const display = fallback ? 'Selection' : 'CSS highlights';
+  test(`cancels queued input effects on Escape with ${display}`, async t => {
+    const f = await setup(t);
+    if (fallback) f.window.CSS.highlights = undefined;
+    const { panel, input } = await openFind(f, 'old old new new new');
+    typeFind(f, input, 'old');
+    f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+    const set = t.mock.method(f.registry, 'set');
+    queueFind(f, input, 'new');
+    f.key('Escape', {}, input);
+    assert.equal(f.frames.size, 0);
+    f.frame();
+    assert.equal(panel.hidden, true);
+    assert.equal(f.by.mock.callCount(), 0);
+    assert.equal(set.mock.callCount(), 0);
+    assert.equal(f.registry.size, 0);
+    assert.equal(f.window.getSelection().toString(), '');
+  });
+
+  for (const key of ['n', 'N']) {
+    test(`uses the latest canceled query for ${key} with ${display}`, async t => {
+      const f = await setup(t);
+      if (fallback) f.window.CSS.highlights = undefined;
+      const { panel, input } = await openFind(f, 'old old new new new');
+      typeFind(f, input, 'old');
+      f.key('Enter', {}, input);
+      queueFind(f, input, 'new');
+      f.key('Escape', {}, input);
+      f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+      f.key(key);
+      const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+      assert.equal(range.toString(), 'new');
+      assert.equal(range.startOffset, key === 'n' ? 8 : 16);
+      assert.equal(panel.hidden, true);
+      assert.equal(f.by.mock.callCount(), 1);
+      f.frame();
+      assert.equal(f.by.mock.callCount(), 1);
+    });
+
+    test(`keeps a pending query change across hidden replacement before ${key} with ${display}`, async t => {
+      const f = await setup(t);
+      if (fallback) f.window.CSS.highlights = undefined;
+      const { panel, input } = await openFind(f, 'old old new new new');
+      typeFind(f, input, 'old');
+      f.key('Enter', {}, input);
+      queueFind(f, input, 'new');
+      f.key('Escape', {}, input);
+      f.setSnapshot(snapshot('new and old and new', 2));
+      await f.changed();
+      assert.equal(f.registry.size, 0);
+      f.key(key);
+      const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+      assert.equal(range.toString(), 'new');
+      assert.equal(range.startOffset, key === 'n' ? 0 : 16);
+      assert.equal(range.startContainer, f.article.querySelector('p').firstChild);
+      assert.equal(panel.hidden, true);
+    });
+  }
+
+  test(`does nothing on n after an emptied query is canceled with ${display}`, async t => {
+    const f = await setup(t);
+    if (fallback) f.window.CSS.highlights = undefined;
+    const { panel, input } = await openFind(f, 'old old new new new');
+    typeFind(f, input, 'old');
+    f.key('Enter', {}, input);
+    queueFind(f, input, '');
+    f.key('Escape', {}, input);
+    f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+    f.key('n');
+    f.frame();
+    assert.equal(panel.hidden, true);
+    assert.equal(f.registry.size, 0);
+    assert.equal(f.window.getSelection().toString(), '');
+    assert.equal(f.by.mock.callCount(), 0);
+  });
+}
+
+test('absorbs a queued query into one replacement search without requesting scroll', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f, 'old old new new new');
+  typeFind(f, input, 'old');
+  f.key('Enter', {}, input);
+  const set = t.mock.method(f.registry, 'set');
+  const createRange = t.mock.method(f.window.document, 'createRange');
+  queueFind(f, input, 'new');
+  f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+  f.setSnapshot(snapshot('new and old and new', 2));
+  await f.changed();
+  assert.equal(count.textContent, '1/2');
+  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
+  assert.equal(set.mock.callCount(), 2);
+  assert.equal(createRange.mock.callCount(), 2);
+  assert.equal(f.by.mock.callCount(), 0);
+  assert.equal(f.frames.size, 0);
+  f.frame();
+  assert.equal(set.mock.callCount(), 2);
+  assert.equal(createRange.mock.callCount(), 2);
+  assert.equal(f.by.mock.callCount(), 0);
+});
+
+test('cancels queued search work and removes highlights on page exit', async t => {
+  const f = await setup(t);
+  const { input } = await openFind(f, 'old old new new new');
+  typeFind(f, input, 'old');
+  queueFind(f, input, 'new');
+  f.window.dispatchEvent(new f.window.Event('pagehide'));
+  const set = t.mock.method(f.registry, 'set');
+  f.frame();
+  queueFind(f, input, 'old');
+  f.key('n');
+  assert.equal(f.frames.size, 0);
+  assert.equal(set.mock.callCount(), 0);
+  assert.equal(f.registry.size, 0);
+  assert.equal(f.window.document.querySelector('[role="search"]'), null);
+  assert.equal(f.by.mock.callCount(), 0);
+});
 
 function selectArticleText(f, start, end) {
   const node = f.article.querySelector('p').firstChild;
