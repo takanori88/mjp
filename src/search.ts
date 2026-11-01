@@ -181,6 +181,21 @@ export function updateHighlights(highlights: SearchHighlights, ranges: Range[], 
   } else registry.delete("mjp-search-current");
 }
 
+function matchViewport(range: Range, view: Window, overlays: HTMLElement[]) {
+  const rect = range.getBoundingClientRect();
+  let top = 0;
+  let obscured = false;
+  for (const overlay of overlays) {
+    if (overlay.hidden) continue;
+    const bounds = overlay.getBoundingClientRect();
+    if (bounds.bottom > 0 && bounds.top < view.innerHeight && rect.left < bounds.right && rect.right > bounds.left) {
+      top = Math.max(top, bounds.bottom);
+      obscured ||= rect.top < bounds.bottom && rect.bottom > bounds.top;
+    }
+  }
+  return { rect, top, obscured };
+}
+
 function revealMatch(range: Range, article: HTMLElement, overlays: HTMLElement[]): void {
   const view = article.ownerDocument.defaultView!;
   for (let ancestor = range.startContainer.parentElement; ancestor; ancestor = ancestor.parentElement) {
@@ -196,17 +211,7 @@ function revealMatch(range: Range, article: HTMLElement, overlays: HTMLElement[]
     if (ancestor === article) break;
   }
 
-  const match = range.getBoundingClientRect();
-  let top = 0;
-  let obscured = false;
-  for (const overlay of overlays) {
-    if (overlay.hidden) continue;
-    const bounds = overlay.getBoundingClientRect();
-    if (bounds.bottom > 0 && bounds.top < view.innerHeight && match.left < bounds.right && match.right > bounds.left) {
-      top = Math.max(top, bounds.bottom);
-      obscured ||= match.top < bounds.bottom && match.bottom > bounds.top;
-    }
-  }
+  const { rect: match, top, obscured } = matchViewport(range, view, overlays);
   if (match.top < 0 || match.bottom > view.innerHeight || obscured) {
     view.scrollBy(0, (match.top + match.bottom) / 2 - (top + view.innerHeight) / 2);
   }
@@ -316,18 +321,30 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
     const scrollY = view.scrollY;
     const overlays = options.status ? [panel, options.status] : [panel];
     const found = ranges.findIndex(range => {
-      const rect = range.getBoundingClientRect();
-      let top = 0;
-      for (const overlay of overlays) {
-        if (overlay.hidden) continue;
-        const bounds = overlay.getBoundingClientRect();
-        if (bounds.bottom > 0 && bounds.top < view.innerHeight && rect.left < bounds.right && rect.right > bounds.left) {
-          top = Math.max(top, bounds.bottom);
-        }
-      }
+      const { rect, top } = matchViewport(range, view, overlays);
       return rect.top + scrollY >= originY + top;
     });
     return found === -1 ? 0 : found;
+  }
+
+  function indexFromViewport(direction: 1 | -1): number {
+    if (!ranges.length) return -1;
+    const overlays = options.status ? [panel, options.status] : [panel];
+    const current = ranges[index] && matchViewport(ranges[index], view, overlays);
+    if (current && current.rect.top >= 0 && current.rect.bottom <= view.innerHeight && !current.obscured) {
+      return step(index, ranges.length, direction);
+    }
+    if (direction === 1) {
+      const found = ranges.findIndex(range => {
+        const { rect, top } = matchViewport(range, view, overlays);
+        return rect.top >= top;
+      });
+      return found === -1 ? 0 : found;
+    }
+    for (let candidate = ranges.length - 1; candidate >= 0; candidate--) {
+      if (ranges[candidate].getBoundingClientRect().bottom <= view.innerHeight) return candidate;
+    }
+    return ranges.length - 1;
   }
 
   function paint(): void {
@@ -443,8 +460,8 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
     move(direction: 1 | -1): boolean {
       if (disposed || (!query && panel.hidden)) return false;
       cancelSearch();
-      const changed = ensureFresh();
-      index = step(panel.hidden && changed ? -1 : index, ranges.length, direction);
+      ensureFresh();
+      index = indexFromViewport(direction);
       shown = true;
       paint();
       selectCurrent();

@@ -109,6 +109,133 @@ function matchTops(f, tops) {
   });
 }
 
+async function confirmFindAt(f, index) {
+  const controls = await openFind(f, 'one one one one');
+  typeFind(f, controls.input, 'one');
+  f.key('Enter', {}, controls.input);
+  for (let i = 0; i < index; i++) f.key('n');
+  Object.defineProperty(f.window, 'innerHeight', { value: 400 });
+  return controls;
+}
+
+for (const fallback of [false, true]) {
+  const display = fallback ? 'Selection' : 'CSS highlights';
+  const currentRange = f => fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+  for (const shown of [false, true]) {
+    for (const [position, current, scrollY, key, expected] of [
+      ['above', 0, 400, 'n', 2], ['above', 0, 400, 'N', 2],
+      ['below', 3, 0, 'n', 0], ['below', 3, 0, 'N', 1],
+    ]) {
+      test(`${key} continues from the viewport with the current match ${position}, shown=${shown}, using ${display}`, async t => {
+        const f = await setup(t);
+        if (fallback) f.window.CSS.highlights = undefined;
+        const { panel } = await confirmFindAt(f, current);
+        if (!shown) f.key('Escape');
+        matchTops(f, { 0: 100, 4: 300, 8: 500, 12: 900 });
+        f.window.scrollY = scrollY;
+        f.by.mock.resetCalls();
+        assert.equal(f.key(key).defaultPrevented, true);
+        assert.equal(currentRange(f).startOffset, expected * 4);
+        assert.equal(panel.hidden, true);
+        assert.equal(f.window.document.activeElement, f.article);
+        assert.equal(f.by.mock.callCount(), 0);
+        if (!fallback) assert.equal(f.registry.get('mjp-search').size, 4);
+      });
+    }
+  }
+
+  for (const [key, scrollY, tops, expected, delta] of [
+    ['n', 1000, [100, 300, 500, 900], 0, -1090],
+    ['N', 0, [1000, 1200, 1400, 1800], 3, 1610],
+  ]) {
+    test(`${key} wraps when no match remains beyond the viewport boundary using ${display}`, async t => {
+      const f = await setup(t);
+      if (fallback) f.window.CSS.highlights = undefined;
+      await confirmFindAt(f, 1);
+      matchTops(f, Object.fromEntries(tops.map((top, index) => [index * 4, top])));
+      f.window.scrollY = scrollY;
+      f.by.mock.resetCalls();
+      f.key(key);
+      assert.equal(currentRange(f).startOffset, expected * 4);
+      assert.deepEqual(f.by.mock.calls.map(call => call.arguments), [[0, delta]]);
+    });
+  }
+
+  for (const shown of [false, true]) {
+    for (const key of ['n', 'N']) {
+      test(`${key} chooses viewport matches in replacement content with shown=${shown} using ${display}`, async t => {
+        const f = await setup(t);
+        if (fallback) f.window.CSS.highlights = undefined;
+        const { panel } = await confirmFindAt(f, 0);
+        if (!shown) f.key('Escape');
+        f.setSnapshot(snapshot('new one one one one', 2));
+        await f.changed();
+        matchTops(f, { 4: 100, 8: 300, 12: 500, 16: 900 });
+        f.window.scrollY = 400;
+        f.by.mock.resetCalls();
+        f.key(key);
+        const range = currentRange(f);
+        assert.equal(range.startOffset, 12);
+        assert.equal(range.startContainer, f.article.querySelector('p').firstChild);
+        assert.equal(range.toString(), 'one');
+        assert.equal(panel.hidden, true);
+        assert.equal(f.by.mock.callCount(), 0);
+      });
+    }
+  }
+}
+
+for (const [position, tops, key, expected, scrolls = false] of [
+  ['inside', [0, 100, 200, 300], 'n', 2], ['inside', [0, 100, 200, 300], 'N', 0],
+  ['at the top', [-100, 0, 100, 200], 'n', 2], ['at the top', [-100, 0, 100, 200], 'N', 0, true],
+  ['at the bottom', [100, 380, 500, 700], 'n', 2, true], ['at the bottom', [100, 380, 500, 700], 'N', 0],
+  ['partly above', [-100, -10, 100, 500], 'n', 2], ['partly above', [-100, -10, 100, 500], 'N', 2],
+  ['partly below', [100, 390, 500, 700], 'n', 0], ['partly below', [100, 390, 500, 700], 'N', 0],
+]) {
+  test(`${key} selects the expected match when the current match is ${position}`, async t => {
+    const f = await setup(t);
+    await confirmFindAt(f, 1);
+    matchTops(f, Object.fromEntries(tops.map((top, index) => [index * 4, top])));
+    f.by.mock.resetCalls();
+    f.key(key);
+    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, expected * 4);
+    assert.equal(f.by.mock.callCount(), scrolls ? 1 : 0);
+  });
+}
+
+for (const key of ['n', 'N']) {
+  for (const obstacle of ['visible banner', 'hidden banner', 'banner beside the match', 'closed search panel']) {
+    test(`${key} considers a ${obstacle} when deciding whether to step from the current match`, async t => {
+      const f = await setup(t);
+      const { panel } = await confirmFindAt(f, 0);
+      matchTops(f, { 0: 20, 4: 40, 8: 60, 12: 300 });
+      const overlay = obstacle === 'closed search panel' ? panel : f.status;
+      overlay.hidden = obstacle === 'hidden banner' || obstacle === 'closed search panel';
+      const left = obstacle === 'banner beside the match' ? 600 : 0;
+      overlay.getBoundingClientRect = () => ({ top: 0, bottom: 60, left, right: 800, width: 800 - left, height: 60 });
+      f.by.mock.resetCalls();
+      f.key(key);
+      const expected = key === 'N' ? 3 : obstacle === 'visible banner' ? 2 : 1;
+      assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, expected * 4);
+      assert.equal(f.by.mock.callCount(), 0);
+    });
+  }
+}
+
+for (const key of ['n', 'N']) {
+  test(`${key} leaves empty replacement results hidden without scrolling`, async t => {
+    const f = await setup(t);
+    const { panel } = await confirmFindAt(f, 0);
+    f.setSnapshot(snapshot('missing', 2));
+    await f.changed();
+    f.by.mock.resetCalls();
+    assert.equal(f.key(key).defaultPrevented, true);
+    assert.equal(f.registry.size, 0);
+    assert.equal(panel.hidden, true);
+    assert.equal(f.by.mock.callCount(), 0);
+  });
+}
+
 async function editPriorSearch(f, shown = true) {
   const controls = await openFind(f, 'old old old new new');
   typeFind(f, controls.input, 'old');
