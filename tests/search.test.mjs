@@ -58,7 +58,7 @@ function rangesFor(segments, query, limit = search.MAX_MATCHES) {
   return search.createMatchRanges(segments, starts, folded.length);
 }
 
-function searchControllerFixture(t, classes = null, style = null, highlights = true) {
+function searchControllerFixture(t, classes = null, style = null) {
   const { article, window } = articleFixture(t, '<p>short short <em>shore</em></p>');
   if (classes !== null) article.setAttribute('class', classes);
   if (style !== null) article.setAttribute('style', style);
@@ -70,8 +70,7 @@ function searchControllerFixture(t, classes = null, style = null, highlights = t
   let frameId = 0;
   window.requestAnimationFrame = callback => { frames.set(++frameId, callback); return frameId; };
   window.cancelAnimationFrame = id => frames.delete(id);
-  const marks = fakeHighlights();
-  const controller = search.createSearch(article, highlights ? { highlights: marks } : {});
+  const controller = search.createSearch(article);
   t.after(() => controller.dispose());
   const input = value => {
     controller.input.value = value;
@@ -83,15 +82,15 @@ function searchControllerFixture(t, classes = null, style = null, highlights = t
     queued.forEach(callback => callback(0));
   };
   controller.open();
-  return { article, window, controller, marks, frames, input, frame };
+  return { article, window, controller, frames, input, frame };
 }
 
-for (const highlights of [true, false]) {
+{
   for (const [classes, style] of [
     [null, null], ['', ''], ['markdown-body keep', 'color:red; transform:translateX(2px) !important'],
   ]) {
-    test(`search never changes article class or style with ${highlights ? 'CSS highlights' : 'Selection'} and ${JSON.stringify([classes, style])}`, t => {
-      const f = searchControllerFixture(t, classes, style, highlights);
+    test(`search never changes article class or style with ${JSON.stringify([classes, style])}`, t => {
+      const f = searchControllerFixture(t, classes, style);
       const html = f.article.innerHTML;
       const nodes = [...f.article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]);
       const observer = new f.window.MutationObserver(() => {});
@@ -107,6 +106,7 @@ for (const highlights of [true, false]) {
       for (const query of ['s', 'sh', 'short']) {
         f.input(query);
         f.frame();
+        f.frame();
         unchanged();
         assert.equal(f.frames.size, 0);
       }
@@ -115,6 +115,7 @@ for (const highlights of [true, false]) {
       unchanged();
       for (const direction of [1, -1]) {
         f.controller.move(direction);
+        f.frame();
         f.frame();
         unchanged();
       }
@@ -127,6 +128,7 @@ for (const highlights of [true, false]) {
       f.controller.open();
       for (const query of ['missing', '']) {
         f.input(query);
+        f.frame();
         f.frame();
         unchanged();
       }
@@ -142,6 +144,161 @@ for (const highlights of [true, false]) {
 }
 
 const rect = (top, right, left = 0) => ({ top, bottom: top + 20, left, right, width: right - left, height: 20 });
+
+function overlayBoxes(f) { return [...f.article.parentElement.querySelectorAll('.search-mark')]; }
+function boxGeometry(box) { return ['left', 'top', 'width', 'height'].map(name => parseFloat(box.style[name])); }
+function searchAndDraw(f, query = 'short') { f.input(query); f.frame(); f.frame(); }
+
+test('draws one sibling box per nonzero match rectangle in page coordinates and distinguishes the current match', t => {
+  const f = searchControllerFixture(t);
+  f.window.scrollX = 25;
+  f.window.scrollY = 200;
+  f.window.Range.prototype.getClientRects = function () {
+    return this.startOffset === 0 ? [rect(100.25, 140, 100), rect(120.5, 160, 120), rect(80, 0), { ...rect(90, 150), height: 0, bottom: 90 }] : [rect(180, 230, 200)];
+  };
+  searchAndDraw(f);
+  const container = f.article.parentElement.querySelector('.search-marks');
+  assert.ok(container);
+  assert.equal(container.getAttribute('aria-hidden'), 'true');
+  assert.equal(container.parentElement, f.article.parentElement);
+  assert.equal(container.nextElementSibling === f.article || Boolean(container.compareDocumentPosition(f.article) & f.window.Node.DOCUMENT_POSITION_FOLLOWING), true);
+  const boxes = overlayBoxes(f);
+  assert.deepEqual(boxes.map(boxGeometry), [[125, 300.25, 40, 20], [145, 320.5, 40, 20], [225, 380, 30, 20]]);
+  assert.deepEqual(boxes.map(box => box.classList.contains('search-mark-current')), [true, true, false]);
+  assert.equal(f.article.querySelector('.search-mark'), null);
+});
+
+test('reuses box elements and attaches them in one fragment update while navigation uses the latest state', t => {
+  const f = searchControllerFixture(t);
+  searchAndDraw(f);
+  const boxes = overlayBoxes(f);
+  assert.equal(boxes.length, 2);
+  const container = boxes[0].parentElement;
+  const updates = new f.window.MutationObserver(() => {});
+  updates.observe(container, { childList: true });
+  t.after(() => updates.disconnect());
+  f.controller.commit();
+  f.controller.move(1);
+  f.controller.move(-1);
+  assert.equal(f.frames.size, 1);
+  f.frame();
+  assert.deepEqual(overlayBoxes(f), boxes);
+  assert.equal(overlayBoxes(f)[0].classList.contains('search-mark-current'), true);
+  assert.equal(updates.takeRecords().filter(record => record.addedNodes.length).length, 1);
+});
+
+for (const selector of ['pre', 'table']) {
+  test(`clips rectangles against the visible ${selector}, including fully hidden and nested clips`, t => {
+    const f = searchControllerFixture(t);
+    f.article.innerHTML = selector === 'pre' ? '<div style="overflow-x:auto"><pre style="overflow-x:auto">short</pre></div>' : '<div style="overflow-x:auto"><table style="overflow-x:auto"><tr><td>short</td></tr></table></div>';
+    f.controller.documentReplaced();
+    f.article.firstChild.getBoundingClientRect = () => ({ ...rect(100, 180, 90), bottom: 160, height: 60 });
+    f.article.querySelector(selector).getBoundingClientRect = () => ({ ...rect(110, 200, 100), bottom: 150, height: 40 });
+    f.window.Range.prototype.getClientRects = () => [rect(100, 150, 80), rect(130, 230, 150), rect(110, 90, 50), rect(170, 140, 110)];
+    searchAndDraw(f);
+    assert.deepEqual(overlayBoxes(f).map(boxGeometry), [[100, 110, 50, 10], [150, 130, 30, 20]]);
+  });
+
+  test(`reclips boxes on captured horizontal ${selector} scrolling in the same frame as the badge`, t => {
+    const f = searchControllerFixture(t);
+    f.article.innerHTML = selector === 'pre' ? '<pre style="overflow-x:auto">short</pre>' : '<table style="overflow-x:auto"><tr><td>short</td></tr></table>';
+    f.controller.documentReplaced();
+    const scroller = f.article.querySelector(selector);
+    scroller.getBoundingClientRect = () => ({ ...rect(90, 200, 100), bottom: 140, height: 50 });
+    f.window.Range.prototype.getClientRects = () => [rect(100, 250 - scroller.scrollLeft, 180 - scroller.scrollLeft)];
+    searchAndDraw(f);
+    f.controller.commit();
+    f.frame();
+    assert.deepEqual(overlayBoxes(f).map(boxGeometry), [[180, 100, 20, 20]]);
+    scroller.scrollLeft = 100;
+    scroller.dispatchEvent(new f.window.Event('scroll'));
+    assert.equal(f.frames.size, 1);
+    f.frame();
+    assert.deepEqual(overlayBoxes(f).map(boxGeometry), [[100, 100, 50, 20]]);
+    assert.equal(f.article.parentElement.querySelector('.search-count').hidden, false);
+  });
+}
+
+test('keeps overlays visible while editing and restores prior overlay visibility on cancellation', t => {
+  const f = searchControllerFixture(t);
+  searchAndDraw(f);
+  f.controller.commit();
+  f.frame();
+  const prior = overlayBoxes(f);
+  f.controller.open();
+  searchAndDraw(f, 'shore');
+  assert.equal(overlayBoxes(f).length, 1);
+  f.controller.close();
+  f.frame();
+  assert.equal(f.controller.input.value, 'short');
+  assert.equal(overlayBoxes(f).length, 2);
+  assert.equal(overlayBoxes(f)[0], prior[0]);
+});
+
+for (const action of ['clear', 'empty', 'zero results', 'cancel', 'dispose']) {
+  test(`removes all boxes on ${action} without allowing queued placement to revive them`, t => {
+    const f = searchControllerFixture(t);
+    searchAndDraw(f);
+    assert.equal(overlayBoxes(f).length, 2);
+    f.controller.commit();
+    const queued = [...f.frames.values()];
+    if (action === 'clear') f.controller.close();
+    if (action === 'empty' || action === 'zero results') {
+      f.controller.open();
+      searchAndDraw(f, action === 'empty' ? '' : 'missing');
+      if (action === 'empty') f.controller.commit();
+    }
+    if (action === 'cancel') {
+      f.controller.close();
+      f.controller.open();
+      searchAndDraw(f, 'sh');
+      f.controller.close();
+    }
+    if (action === 'dispose') f.controller.dispose();
+    queued.forEach(callback => callback(0));
+    f.frame();
+    assert.equal(overlayBoxes(f).length, 0);
+    if (action === 'dispose') assert.equal(f.article.parentElement.querySelector('.search-marks'), null);
+  });
+}
+
+test('does not depend on CSS Highlight or change user Selection, even on confirmation and navigation', t => {
+  const f = searchControllerFixture(t);
+  Object.defineProperty(f.window, 'CSS', { get() { throw new Error('CSS Highlight must not be consulted'); } });
+  const selection = f.window.getSelection();
+  selection.setBaseAndExtent(f.article.firstChild.firstChild, 5, f.article.firstChild.firstChild, 0);
+  searchAndDraw(f);
+  f.controller.commit();
+  f.frame();
+  f.controller.move(1);
+  f.frame();
+  assert.equal(overlayBoxes(f).length, 2);
+  assert.equal(selection.toString(), 'short');
+  assert.equal(selection.anchorOffset, 5);
+  assert.equal(selection.focusOffset, 0);
+});
+
+for (const total of [999, 1000, 1001]) {
+  test(`draws only the retained 1000 matches at a total of ${total}`, t => {
+    const f = searchControllerFixture(t);
+    f.article.textContent = 'a'.repeat(total);
+    f.controller.documentReplaced();
+    searchAndDraw(f, 'a');
+    assert.equal(overlayBoxes(f).length, Math.min(total, 1000));
+  });
+}
+
+test('keeps page-coordinate boxes unchanged on window scrolling', t => {
+  const f = searchControllerFixture(t);
+  searchAndDraw(f);
+  const before = overlayBoxes(f).map(boxGeometry);
+  const layout = t.mock.method(f.window.Range.prototype, 'getClientRects');
+  f.window.scrollY = 300;
+  f.window.dispatchEvent(new f.window.Event('scroll'));
+  assert.equal(f.frames.size, 0);
+  assert.deepEqual(overlayBoxes(f).map(boxGeometry), before);
+  assert.equal(layout.mock.callCount(), 0);
+});
 
 for (const [html, query, tail, rectangles, expected] of [
   ['<pre><code>hit end\nthis line is much longer</code></pre>', 'hit', ' end', [rect(100, 160)], 160],
@@ -196,8 +353,7 @@ for (const [query, result, open, shown] of [
     let frameId = 0;
     window.requestAnimationFrame = callback => { frames.set(++frameId, callback); return frameId; };
     window.cancelAnimationFrame = id => frames.delete(id);
-    const highlights = fakeHighlights();
-    const controller = search.createSearch(article, { highlights });
+    const controller = search.createSearch(article);
     t.after(() => controller.dispose());
     controller.open();
     controller.input.value = query;
@@ -214,7 +370,7 @@ for (const [query, result, open, shown] of [
       assert.equal(article.getAttribute('style'), null);
     } else assert.equal(frames.size, 0);
     assert.equal(window.document.activeElement, open ? controller.input : article);
-    if (result === 'committed') assert.equal([...highlights.registry.get('mjp-search-current')][0].startOffset, 0);
+    if (result === 'committed') assert.equal(article.parentElement.querySelectorAll('.search-mark-current').length, 1);
     if (result === 'empty') assert.equal(article.parentElement.querySelector('[role="search"] [aria-live]').textContent, '0/0');
   });
 }
@@ -340,151 +496,29 @@ test('keeps image fallback search results stable through local image loading', a
   assert.deepEqual(search.collectSegments(article).map(segment => segment.text), before);
 });
 
-function fakeHighlights() {
-  const registry = new Map();
-  const created = [];
-  return { registry, created, create(ranges) {
-    const highlight = new Set(ranges);
-    created.push(highlight);
-    return highlight;
-  } };
-}
-
-test('retains registered highlights while incremental queries replace every old Range', t => {
-  const { article } = articleFixture(t, '<p>yes yazi yard yazi</p>');
-  const segments = search.collectSegments(article);
-  const highlights = fakeHighlights();
-  const set = t.mock.method(highlights.registry, 'set');
-  const remove = t.mock.method(highlights.registry, 'delete');
-  const first = rangesFor(segments, 'y');
-  search.updateHighlights(highlights, first, 0);
-  const all = highlights.registry.get('mjp-search');
-  const current = highlights.registry.get('mjp-search-current');
-  let previous = first;
-  for (const query of ['ya', 'yaz', 'yazi']) {
-    const ranges = rangesFor(segments, query);
-    search.updateHighlights(highlights, ranges, 1);
-    assert.equal(highlights.registry.get('mjp-search'), all);
-    assert.equal(highlights.registry.get('mjp-search-current'), current);
-    assert.deepEqual([...all], ranges);
-    assert.deepEqual([...current], [ranges[1]]);
-    for (const range of previous) {
-      assert.equal(all.has(range), false);
-      assert.equal(current.has(range), false);
-    }
-    previous = ranges;
-  }
-  search.updateHighlights(highlights, previous, 0);
-  assert.equal(highlights.registry.get('mjp-search-current'), current);
-  assert.deepEqual([...current], [previous[0]]);
-  assert.equal(current.priority, 1);
-  assert.equal(highlights.created.length, 2);
-  assert.equal(set.mock.callCount(), 2);
-  assert.equal(remove.mock.callCount(), 0);
-});
-
-test('clears hidden or zero-result highlights and reuses their registrations when results return', t => {
-  const { article } = articleFixture(t, '<p>yes yazi yard yazi</p>');
-  const segments = search.collectSegments(article);
-  const highlights = fakeHighlights();
-  const first = rangesFor(segments, 'y');
-  search.updateHighlights(highlights, first, 0);
-  const all = highlights.registry.get('mjp-search');
-  const current = highlights.registry.get('mjp-search-current');
-  for (let cycle = 0; cycle < 2; cycle++) {
-    search.updateHighlights(highlights, [], -1);
-    assert.equal(highlights.registry.get('mjp-search'), all);
-    assert.equal(highlights.registry.get('mjp-search-current'), current);
-    assert.equal(all.size, 0);
-    assert.equal(current.size, 0);
-    const ranges = rangesFor(segments, cycle ? 'yazi' : 'ya');
-    search.updateHighlights(highlights, ranges, 1);
-    assert.equal(highlights.registry.get('mjp-search'), all);
-    assert.equal(highlights.registry.get('mjp-search-current'), current);
-    assert.deepEqual([...all], ranges);
-    assert.deepEqual([...current], [ranges[1]]);
-    assert.equal(first.some(range => all.has(range) || current.has(range)), false);
-  }
-  assert.equal(highlights.created.length, 2);
-});
-
-test('retains initially empty highlights and clears only the current contents for an invalid index', t => {
-  const { article } = articleFixture(t, '<p>yazi yazi</p>');
-  const highlights = fakeHighlights();
-  search.updateHighlights(highlights, [], -1);
-  const all = highlights.registry.get('mjp-search');
-  const current = highlights.registry.get('mjp-search-current');
-  assert.ok(all);
-  assert.ok(current);
-  assert.equal(all.size, 0);
-  assert.equal(current.size, 0);
-  const ranges = rangesFor(search.collectSegments(article), 'yazi');
-  for (const index of [0, -1, ranges.length]) {
-    search.updateHighlights(highlights, ranges, index);
-    assert.equal(highlights.registry.get('mjp-search'), all);
-    assert.equal(highlights.registry.get('mjp-search-current'), current);
-    assert.deepEqual([...all], ranges);
-    assert.deepEqual([...current], index === 0 ? [ranges[0]] : []);
-  }
-  assert.equal(highlights.created.length, 2);
-});
-
-test('registers all matches and the current match without changing any document nodes', t => {
-  const { article } = articleFixture(t, '<p>Ｆ<em>o</em>o foo</p><pre><code>FOO</code></pre>');
-  const html = article.innerHTML;
-  const nodes = [...article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]);
-  const ranges = rangesFor(search.collectSegments(article), 'foo');
-  const highlights = fakeHighlights();
-  search.updateHighlights(highlights, ranges, 1);
-  const all = highlights.registry.get('mjp-search');
-  const current = highlights.registry.get('mjp-search-current');
-  assert.deepEqual([...all].map(range => range.toString()), ['Ｆoo', 'foo', 'FOO']);
-  assert.deepEqual([...current], [ranges[1]]);
-  assert.equal(current.priority, 1);
-  assert.equal(ranges[0].startContainer, article.querySelector('p').firstChild);
-  assert.equal(ranges[0].startOffset, 0);
-  assert.equal(ranges[0].endContainer, article.querySelector('em').nextSibling);
-  assert.equal(ranges[0].endOffset, 1);
-  search.updateHighlights(highlights, ranges, 2);
-  assert.deepEqual([...highlights.registry.get('mjp-search-current')], [ranges[2]]);
-  search.updateHighlights(highlights, [], -1);
-  assert.equal(highlights.registry.get('mjp-search'), all);
-  assert.equal(highlights.registry.get('mjp-search-current'), current);
-  assert.equal(all.size, 0);
-  assert.equal(current.size, 0);
-  assert.equal(article.innerHTML, html);
-  const after = [...article.querySelectorAll('*')].flatMap(node => [node, ...node.childNodes]);
-  assert.equal(after.length, nodes.length);
-  after.forEach((node, index) => assert.equal(node, nodes[index]));
-});
-
-test('creates and registers at most 1000 match Ranges', t => {
+test('creates at most 1000 match Ranges', t => {
   const { article, window } = articleFixture(t, '<pre></pre>');
-  const highlights = fakeHighlights();
   const createRange = t.mock.method(window.document, 'createRange');
   for (const count of [999, 1000, 1001]) {
     article.firstChild.textContent = 'a'.repeat(count);
     const ranges = rangesFor(search.collectSegments(article), 'a');
     assert.equal(ranges.length, Math.min(count, 1000));
     assert.equal(createRange.mock.callCount(), Math.min(count, 1000));
-    search.updateHighlights(highlights, ranges, ranges.length - 1);
-    assert.equal(highlights.registry.get('mjp-search').size, ranges.length);
-    assert.equal([...highlights.registry.get('mjp-search-current')][0], ranges.at(-1));
     createRange.mock.resetCalls();
   }
 });
 
 test('searching markup-like text never inserts elements or changes the article', t => {
-  const { article } = articleFixture(t, '<p>&lt;img src=x onerror=example()&gt; &amp; &lt;script&gt;</p>');
+  const f = searchControllerFixture(t);
+  const { article } = f;
+  article.innerHTML = '<p>&lt;img src=x onerror=example()&gt; &amp; &lt;script&gt;</p>';
+  f.controller.documentReplaced();
   const html = article.innerHTML;
   const paragraph = article.firstChild;
   const text = paragraph.firstChild;
-  const highlights = fakeHighlights();
   for (const query of ['<img src=x onerror=example()>', '<script>', '</p><img src=x>']) {
-    const ranges = rangesFor(search.collectSegments(article), query);
-    search.updateHighlights(highlights, ranges, ranges.length ? 0 : -1);
-    assert.equal(ranges.length, query.startsWith('</p>') ? 0 : 1);
-    if (ranges.length) assert.equal(ranges[0].toString(), query);
+    searchAndDraw(f, query);
+    assert.equal(overlayBoxes(f).length, query.startsWith('</p>') ? 0 : 1);
   }
   assert.equal(article.innerHTML, html);
   assert.equal(article.firstChild, paragraph);
@@ -493,7 +527,8 @@ test('searching markup-like text never inserts elements or changes the article',
 });
 
 test('search highlighting preserves rendered code copying and external link actions', async t => {
-  const { window, article } = articleFixture(t, '');
+  const f = searchControllerFixture(t);
+  const { window, article } = f;
   globalThis.window = window;
   const { startPreview } = await import('../src/preview.ts');
   window.scrollTo = () => {};
@@ -510,10 +545,9 @@ test('search highlighting preserves rendered code copying and external link acti
   const button = article.querySelector('button');
   const anchor = article.querySelector('a');
   const html = article.innerHTML;
-  const highlights = fakeHighlights();
-  const ranges = rangesFor(search.collectSegments(article), 'foo');
-  search.updateHighlights(highlights, ranges, 0);
-  assert.deepEqual([...highlights.registry.get('mjp-search')].map(range => range.toString()), ['foo', 'foo', 'foo']);
+  f.controller.documentReplaced();
+  searchAndDraw(f, 'foo');
+  assert.equal(overlayBoxes(f).length, 3);
   assert.equal(article.innerHTML, html);
   assert.equal(article.querySelector('code'), code);
   assert.equal(article.querySelector('button'), button);

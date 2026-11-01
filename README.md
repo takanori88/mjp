@@ -72,7 +72,7 @@ The CLI starts with one preview in its own process. Normal Finder launches are e
 
 ### Finding text
 
-Search follows Vim-style controls. Opening search saves your reading position. Typing updates the matches and scrolls to the first match at or after the top of that saved reading area, accounting for the banner and search panel; if none remains, it wraps to the first match. Reopening an existing query also selects from your new reading position.
+Search follows Vim-style controls. Colored boxes mark matches over the text, with a stronger color for the current match. Opening search saves your reading position. Typing updates the matches and scrolls to the first match at or after the top of that saved reading area, accounting for the banner and search panel; if none remains, it wraps to the first match. Reopening an existing query also selects from your new reading position.
 
 Enter confirms the current match, closes the panel, and returns focus to the document. Highlights stay visible, with a count badge such as `[3/12]` at the end of the current matching line. A query with no matches stays editable as `0/0`; an empty query closes search and clears its marks. While open, the panel shows the current position and count. Search keeps the first 1000 matches: exactly 1000 shows `3/1000`, while more shows `3/1000+` (or `[3/1000+]` in the badge); navigation wraps within those stored matches.
 
@@ -82,9 +82,9 @@ Esc while search is open cancels the edit and restores the previous query, match
 
 Search covers rendered text, including code, table cells, and link labels, in the current document. Matching ignores case and fullwidth ASCII forms, but does not cross paragraphs, list items, table cells, or explicit line breaks. Alt text for local images eligible for loading is excluded even if loading fails. Alt text for remote images and images beyond the 64-reference limit remains searchable.
 
-Live reload searches again with the same query, keeping the match number if it still exists and otherwise returning to the first match, without requesting a search scroll. The badge follows layout changes, including images loading; it is hidden while the panel is open or no matches remain.
+Live reload searches again with the same query, keeping the match number if it still exists and otherwise returning to the first match, without requesting a search scroll. The boxes and badge follow layout changes, including images loading; the badge is hidden while the panel is open, and both disappear when no matches remain.
 
-On WebViews without all-match highlight support, typing scrolls to the match chosen from the saved position and leaves the document selection unchanged. Enter confirms and selects the current match with focus in the document; `n` and `N` select their destination match. The same count badge is available. Clearing marks with Esc removes only the selection set by search, preserving a selection you made afterward. `⌘C` uses the WebView's normal copy behavior for the focused input or document selection.
+Search uses the same overlay display on all WebViews and leaves document selection to the reader. `⌘C` uses the WebView's normal copy behavior for the focused input or document selection.
 
 ### Copying code
 

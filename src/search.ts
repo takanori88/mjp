@@ -183,31 +183,6 @@ export function createMatchRanges(segments: SearchSegment[], starts: Match[], qu
   return starts.map(match => segments[match.segment].range(match.offset, queryLength));
 }
 
-export type SearchHighlights = {
-  registry: Pick<HighlightRegistry, "get" | "set" | "delete">;
-  create: (ranges: Range[]) => Highlight;
-};
-
-export function updateHighlights(highlights: SearchHighlights, ranges: Range[], index: number): void {
-  const { registry, create } = highlights;
-  let all = registry.get("mjp-search");
-  if (!all) {
-    all = create([]);
-    registry.set("mjp-search", all);
-  }
-  let current = registry.get("mjp-search-current");
-  if (!current) {
-    current = create([]);
-    current.priority = 1;
-    registry.set("mjp-search-current", current);
-  }
-  // WebKit can leave old ranges painted when a registered Highlight is replaced.
-  all.clear();
-  current.clear();
-  for (const range of ranges) all.add(range);
-  if (ranges[index]) current.add(ranges[index]);
-}
-
 function matchViewport(range: Range, view: Window, overlays: HTMLElement[]) {
   const rect = range.getBoundingClientRect();
   let top = 0;
@@ -278,7 +253,6 @@ function focusKeepingSelection(element: HTMLElement): void {
 }
 
 type SearchOptions = {
-  highlights?: SearchHighlights;
   status?: HTMLElement;
 };
 
@@ -306,7 +280,11 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   badge.setAttribute("aria-live", "polite");
   badge.setAttribute("aria-atomic", "true");
   badge.hidden = true;
-  article.before(panel, badge);
+  const marks = document.createElement("div");
+  marks.className = "search-marks";
+  marks.setAttribute("aria-hidden", "true");
+  marks.hidden = true;
+  article.before(panel, marks, badge);
   article.tabIndex = -1;
 
   let shown = false;
@@ -322,7 +300,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   let frame: number | undefined;
   let positionFrame: number | undefined;
   let disposed = false;
-  let selected: SelectionState | undefined;
+  let boxes: HTMLElement[] = [];
   let origin: SearchOrigin | undefined;
 
   function cancelSearch(): void {
@@ -384,17 +362,15 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
 
   function paint(): void {
     if (!panel.hidden) count.textContent = `${index + 1}/${ranges.length}${truncated ? "+" : ""}`;
-    if (options.highlights) updateHighlights(options.highlights, shown ? ranges : [], index);
-    else if (!shown) clearSelection();
     schedulePosition();
   }
 
-  function canPosition(): boolean {
+  function canPositionBadge(): boolean {
     return !disposed && shown && panel.hidden && Boolean(ranges[index]);
   }
 
   function positionBadge(): void {
-    if (!canPosition()) return;
+    if (!canPositionBadge()) return;
     const range = ranges[index];
     const line = Array.from(range.getClientRects()).at(-1);
     if (!line) {
@@ -420,18 +396,68 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   }
 
   function schedulePosition(): void {
-    if (!canPosition()) {
+    if (disposed || !shown || !ranges.length) {
       if (positionFrame !== undefined) view.cancelAnimationFrame(positionFrame);
       positionFrame = undefined;
+      marks.replaceChildren();
+      marks.hidden = true;
       badge.hidden = true;
       return;
     }
+    if (!panel.hidden) badge.hidden = true;
     if (positionFrame === undefined) {
       positionFrame = view.requestAnimationFrame(() => {
         positionFrame = undefined;
+        if (disposed || !shown || !ranges.length) return;
+        positionMarks();
         positionBadge();
       });
     }
+  }
+
+  function positionMarks(): void {
+    const geometry: { left: number; top: number; width: number; height: number; current: boolean }[] = [];
+    const clippingBounds = new Map<HTMLElement, DOMRect | undefined>();
+    for (let matchIndex = 0; matchIndex < ranges.length; matchIndex++) {
+      const range = ranges[matchIndex];
+      const clips: DOMRect[] = [];
+      for (let ancestor = range.startContainer.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (!clippingBounds.has(ancestor)) {
+          const overflow = view.getComputedStyle(ancestor).overflowX;
+          clippingBounds.set(ancestor, overflow === "auto" || overflow === "scroll" ? ancestor.getBoundingClientRect() : undefined);
+        }
+        const clip = clippingBounds.get(ancestor);
+        if (clip) clips.push(clip);
+        if (ancestor === article) break;
+      }
+      for (const rect of range.getClientRects()) {
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        let { left, right, top, bottom } = rect;
+        for (const clip of clips) {
+          left = Math.max(left, clip.left);
+          right = Math.min(right, clip.right);
+          top = Math.max(top, clip.top);
+          bottom = Math.min(bottom, clip.bottom);
+        }
+        if (right <= left || bottom <= top) continue;
+        geometry.push({ left: left + view.scrollX, top: top + view.scrollY, width: right - left, height: bottom - top, current: matchIndex === index });
+      }
+    }
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < geometry.length; i++) {
+      const rect = geometry[i];
+      const box = boxes[i] ?? document.createElement("span");
+      boxes[i] = box;
+      box.className = rect.current ? "search-mark search-mark-current" : "search-mark";
+      box.style.left = `${rect.left}px`;
+      box.style.top = `${rect.top}px`;
+      box.style.width = `${rect.width}px`;
+      box.style.height = `${rect.height}px`;
+      fragment.append(box);
+    }
+    boxes.length = geometry.length;
+    marks.replaceChildren(fragment);
+    marks.hidden = !geometry.length;
   }
 
   const observer = typeof view.ResizeObserver === "function" ? new view.ResizeObserver(schedulePosition) : undefined;
@@ -439,33 +465,6 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   if (options.status) observer?.observe(options.status);
   view.addEventListener("resize", schedulePosition);
   for (const event of ["scroll", "load", "error"]) article.addEventListener(event, schedulePosition, true);
-
-  function clearSelection(): void {
-    const previous = selected;
-    selected = undefined;
-    if (!previous) return;
-    const selection = view.getSelection();
-    if (selection && sameSelection(selection, previous)) selection.removeAllRanges();
-  }
-
-  function selectCurrent(): void {
-    if (options.highlights) return;
-    const range = ranges[index];
-    if (!range) {
-      clearSelection();
-      return;
-    }
-    const selection = view.getSelection();
-    if (!selection) return;
-    selection.removeAllRanges();
-    // User adjustments to Selection must not change the cached match ranges.
-    selection.addRange(range.cloneRange());
-    if (!panel.hidden && document.activeElement !== input) {
-      input.focus({ preventScroll: true });
-      selection.setBaseAndExtent(range.startContainer, range.startOffset, range.endContainer, range.endOffset);
-    }
-    selected = selectionState(selection);
-  }
 
   function reveal(): void {
     if (ranges[index]) revealMatch(ranges[index], article, options.status ? [panel, options.status] : [panel]);
@@ -520,7 +519,6 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       paint();
       focusKeepingSelection(article);
       if (shown) {
-        selectCurrent();
         reveal();
       }
       return shown ? "committed" : "closed";
@@ -552,14 +550,12 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       index = indexFromViewport(direction);
       shown = true;
       paint();
-      selectCurrent();
       reveal();
       return true;
     },
     documentReplaced(): void {
       if (disposed) return;
       cancelSearch();
-      clearSelection();
       segments = [];
       ranges = [];
       matches = [];
@@ -578,16 +574,14 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       shown = false;
       panel.hidden = true;
       paint();
-      if (options.highlights) {
-        options.highlights.registry.delete("mjp-search");
-        options.highlights.registry.delete("mjp-search-current");
-      }
       input.removeEventListener("input", onInput);
       observer?.disconnect();
       view.removeEventListener("resize", schedulePosition);
       for (const event of ["scroll", "load", "error"]) article.removeEventListener(event, schedulePosition, true);
       panel.remove();
       badge.remove();
+      marks.remove();
+      boxes = [];
       segments = [];
       ranges = [];
       matches = [];

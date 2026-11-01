@@ -44,10 +44,7 @@ export async function startPreview(
     }
     searchLoading ??= Promise.resolve().then(() => bridge.loadSearch?.() ?? import("./search.ts")).then(module => {
       if (disposed) return;
-      const highlights = window.CSS?.highlights && typeof window.Highlight === "function"
-        ? { registry: window.CSS.highlights, create: (ranges: Range[]) => new window.Highlight(...ranges) }
-        : undefined;
-      search = module.createSearch(article, { status, highlights });
+      search = module.createSearch(article, { status });
       if (searchWanted) search.open();
     }).catch(error => {
       if (disposed) return;

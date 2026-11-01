@@ -14,9 +14,6 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
   const status = window.document.querySelector('aside');
   const by = t.mock.method(window, 'scrollBy', () => {});
   const to = t.mock.method(window, 'scrollTo', () => {});
-  const registry = new Map();
-  window.CSS = { highlights: registry };
-  window.Highlight = class extends Set { constructor(...ranges) { super(ranges); } };
   const frames = new Map();
   let frameNumber = 0;
   window.requestAnimationFrame = callback => { frames.set(++frameNumber, callback); return frameNumber; };
@@ -25,7 +22,17 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
   window.Range.prototype.getBoundingClientRect = function () {
     return typeof matchRect === 'function' ? matchRect(this) : matchRect;
   };
-  window.Range.prototype.getClientRects = function () { return [this.getBoundingClientRect()]; };
+  const rangeIds = new WeakMap();
+  const geometry = new Map();
+  let rangeId = 0;
+  // jsdom has no layout, so unique fake coordinates identify the Range drawn by each box.
+  window.Range.prototype.getClientRects = function () {
+    if (!rangeIds.has(this)) rangeIds.set(this, ++rangeId);
+    const rect = this.getBoundingClientRect();
+    const left = rect.left + rangeIds.get(this) / 1e6;
+    geometry.set(Math.round((left + window.scrollX) * 1e6), this);
+    return [{ ...rect, left }];
+  };
   const observers = [];
   window.ResizeObserver = class {
     targets = new Set();
@@ -57,7 +64,7 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
     target.dispatchEvent(event);
     return event;
   };
-  return { window, article, status, calls, pending, boot, by, to, key, registry, frames, observers,
+  return { window, article, status, calls, pending, boot, by, to, key, geometry, frames, observers,
     frame: () => {
       const callbacks = [...frames.values()];
       frames.clear();
@@ -87,8 +94,15 @@ test('subscribes before reading and renders subsequent document notifications', 
   assert.equal(f.article.querySelector('h1').textContent, 'Recreated');
 });
 
-function assertNoSearchRanges(registry) {
-  for (const name of ['mjp-search', 'mjp-search-current']) assert.equal(registry.get(name)?.size ?? 0, 0);
+function drawnRanges(f) {
+  f.frame();
+  const boxes = [...f.window.document.querySelectorAll('.search-mark')];
+  const rangeFor = box => f.geometry.get(Math.round(parseFloat(box.style.left) * 1e6));
+  return { all: boxes.map(rangeFor), current: boxes.filter(box => box.classList.contains('search-mark-current')).map(rangeFor) };
+}
+
+function assertNoSearchMarks(f) {
+  assert.equal(f.window.document.querySelectorAll('.search-mark').length, 0);
 }
 
 async function openFind(f, text = 'one one one', key = '/') {
@@ -115,67 +129,30 @@ function typeFind(f, input, value) {
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-test('typing y through yazi updates registered highlights in place through hiding, redisplay, and replacement', async t => {
+test('draws matches without consulting CSS Highlight APIs and preserves a user selection through search controls', async t => {
   const f = await setup(t);
-  const { input } = await openFind(f, 'yes yazi yard yazi');
-  const set = t.mock.method(f.registry, 'set');
-  typeFind(f, input, 'y');
-  const all = f.registry.get('mjp-search');
-  const current = f.registry.get('mjp-search-current');
-  let previous = [...all];
-  for (const query of ['ya', 'yaz', 'yazi']) {
-    typeFind(f, input, query);
-    assert.equal(f.registry.get('mjp-search'), all);
-    assert.equal(f.registry.get('mjp-search-current'), current);
-    assert.deepEqual([...all].map(range => range.toString()), query === 'ya' ? ['ya', 'ya', 'ya'] : [query, query]);
-    assert.deepEqual([...current], [[...all][0]]);
-    assert.equal(previous.some(range => all.has(range) || current.has(range)), false);
-    previous = [...all];
-  }
-  f.key('Enter', {}, input);
-  f.key('Escape');
-  assertNoSearchRanges(f.registry);
-  assert.equal(all.size, 0);
-  assert.equal(current.size, 0);
-  f.key('n');
-  assert.equal(f.registry.get('mjp-search'), all);
-  assert.equal(f.registry.get('mjp-search-current'), current);
-  assert.deepEqual([...all].map(range => range.toString()), ['yazi', 'yazi']);
-  assert.deepEqual([...current], [[...all][1]]);
-  previous = [...all];
-  f.setSnapshot(snapshot('new yazi', 2));
-  await f.changed();
-  assert.equal(f.registry.get('mjp-search'), all);
-  assert.equal(f.registry.get('mjp-search-current'), current);
-  assert.equal(all.size, 1);
-  assert.equal(previous.some(range => all.has(range) || current.has(range)), false);
-  assert.equal([...all][0].startContainer, f.article.querySelector('p').firstChild);
-  assert.equal(set.mock.callCount(), 0);
-});
-
-test('clears both registered highlights before unregistering them on page exit', async t => {
-  const f = await setup(t);
-  const { input } = await openFind(f);
+  for (const property of ['CSS', 'Highlight']) Object.defineProperty(f.window, property, { get() { throw new Error('Highlight API must not be consulted'); } });
+  const { input } = await openFind(f, 'keep one one one');
+  const selection = f.window.getSelection();
+  const node = f.article.querySelector('p').firstChild;
+  selection.setBaseAndExtent(node, 4, node, 0);
   typeFind(f, input, 'one');
-  const all = f.registry.get('mjp-search');
-  const current = f.registry.get('mjp-search-current');
-  const removed = [];
-  t.mock.method(f.registry, 'delete', name => {
-    removed.push([name, f.registry.get(name).size]);
-    return Map.prototype.delete.call(f.registry, name);
-  });
-  f.window.dispatchEvent(new f.window.Event('pagehide'));
-  assert.deepEqual(removed, [['mjp-search', 0], ['mjp-search-current', 0]]);
-  assert.equal(all.size, 0);
-  assert.equal(current.size, 0);
-  assert.equal(f.registry.size, 0);
+  assert.equal(drawnRanges(f).all.length, 3);
+  f.key('Enter', {}, input);
+  f.key('n');
+  f.key('N');
+  f.key('Escape');
+  assert.equal(selection.toString(), 'keep');
+  assert.equal(selection.anchorOffset, 4);
+  assert.equal(selection.focusOffset, 0);
+  assert.equal(f.key('c', { metaKey: true }).defaultPrevented, false);
+  assertNoSearchMarks(f);
 });
 
 const badgeRect = (top, right, left = 100) => ({ top, bottom: top + 20, left, right, width: right - left, height: 20 });
 
-async function badgeFixture(t, text = 'one one one', fallback = false) {
+async function badgeFixture(t, text = 'one one one') {
   const f = await setup(t);
-  if (fallback) f.window.CSS.highlights = undefined;
   const controls = await openFind(f, text);
   const badge = f.window.document.querySelector('.search-count');
   assert.ok(badge);
@@ -184,34 +161,32 @@ async function badgeFixture(t, text = 'one one one', fallback = false) {
   return { ...f, ...controls, badge };
 }
 
-for (const fallback of [false, true]) {
-  test(`shows a sibling count badge after confirmation and navigation using ${fallback ? 'Selection' : 'CSS highlights'}`, async t => {
-    const f = await badgeFixture(t, 'one one one', fallback);
-    const children = [...f.article.querySelectorAll('*')];
-    const html = f.article.innerHTML;
-    assert.equal(f.badge.hidden, true);
-    typeFind(f, f.input, 'one');
-    assert.equal(f.badge.hidden, true);
-    f.key('Enter', {}, f.input);
-    f.frame();
-    assert.equal(f.badge.hidden, false);
-    assert.equal(f.badge.textContent, '[1/3]');
-    assert.equal(f.badge.getAttribute('aria-live'), 'polite');
-    assert.equal(f.badge.parentElement, f.article.parentElement);
-    assert.equal(f.badge.style.left, '148px');
-    assert.equal(f.badge.style.top, '100px');
-    f.key('n');
-    f.frame();
-    assert.equal(f.badge.textContent, '[2/3]');
-    f.key('N');
-    f.frame();
-    assert.equal(f.badge.textContent, '[1/3]');
-    assert.equal(f.article.innerHTML, html);
-    assert.deepEqual([...f.article.querySelectorAll('*')], children);
-    f.key('Escape');
-    assert.equal(f.badge.hidden, true);
-  });
-}
+test(`shows a sibling count badge after confirmation and navigation using overlay marks`, async t => {
+  const f = await badgeFixture(t, 'one one one');
+  const children = [...f.article.querySelectorAll('*')];
+  const html = f.article.innerHTML;
+  assert.equal(f.badge.hidden, true);
+  typeFind(f, f.input, 'one');
+  assert.equal(f.badge.hidden, true);
+  f.key('Enter', {}, f.input);
+  f.frame();
+  assert.equal(f.badge.hidden, false);
+  assert.equal(f.badge.textContent, '[1/3]');
+  assert.equal(f.badge.getAttribute('aria-live'), 'polite');
+  assert.equal(f.badge.parentElement, f.article.parentElement);
+  assert.equal(f.badge.style.left, '148px');
+  assert.equal(f.badge.style.top, '100px');
+  f.key('n');
+  f.frame();
+  assert.equal(f.badge.textContent, '[2/3]');
+  f.key('N');
+  f.frame();
+  assert.equal(f.badge.textContent, '[1/3]');
+  assert.equal(f.article.innerHTML, html);
+  assert.deepEqual([...f.article.querySelectorAll('*')], children);
+  f.key('Escape');
+  assert.equal(f.badge.hidden, true);
+});
 
 for (const total of [999, 1000, 1001]) {
   test(`shows the confirmed count cap in the badge for ${total} matches`, async t => {
@@ -274,7 +249,7 @@ for (const event of ['resize', 'article size', 'status size', 'scroll', 'load', 
     typeFind(f, f.input, 'one');
     f.key('Enter', {}, f.input);
     f.frame();
-    const current = f.registry.get('mjp-search-current');
+    const current = drawnRanges(f).current;
     const articleBounds = f.article.getBoundingClientRect();
     const statusBounds = f.status.getBoundingClientRect();
     f.setMatchRect(badgeRect(240, 300));
@@ -288,7 +263,8 @@ for (const event of ['resize', 'article size', 'status size', 'scroll', 'load', 
     f.frame();
     assert.equal(f.badge.style.left, '308px');
     assert.equal(f.badge.style.top, '240px');
-    assert.equal(f.registry.get('mjp-search-current'), current);
+    assert.deepEqual([...f.window.document.querySelectorAll('.search-mark')].map(box => box.style.top), ['240px']);
+    assert.deepEqual(drawnRanges(f).current, current);
     assert.deepEqual(f.article.getBoundingClientRect(), articleBounds);
     assert.deepEqual(f.status.getBoundingClientRect(), statusBounds);
   });
@@ -307,10 +283,11 @@ test('coalesces badge placement separately from search and uses the latest match
   const layout = t.mock.method(f.window.Range.prototype, 'getClientRects');
   assert.equal(f.frames.size, 1);
   f.frame();
-  assert.equal(layout.mock.callCount(), 2);
+  assert.equal(layout.mock.callCount(), 5);
   assert.equal(f.badge.style.left, '408px');
   assert.equal(f.badge.style.top, '260px');
   assert.equal(f.badge.textContent, '[3/3]');
+  assert.equal(f.window.document.querySelector('.search-mark-current'), f.window.document.querySelectorAll('.search-mark')[2]);
 });
 
 for (const action of ['open', 'clear', 'pagehide']) {
@@ -402,9 +379,9 @@ async function confirmFindAt(f, index) {
   return controls;
 }
 
-for (const fallback of [false, true]) {
-  const display = fallback ? 'Selection' : 'CSS highlights';
-  const currentRange = f => fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+{
+  const display = 'overlay marks';
+  const currentRange = f => drawnRanges(f).current[0];
   for (const shown of [false, true]) {
     for (const [position, current, scrollY, key, expected] of [
       ['above', 0, 400, 'n', 2], ['above', 0, 400, 'N', 2],
@@ -412,7 +389,6 @@ for (const fallback of [false, true]) {
     ]) {
       test(`${key} continues from the viewport with the current match ${position}, shown=${shown}, using ${display}`, async t => {
         const f = await setup(t);
-        if (fallback) f.window.CSS.highlights = undefined;
         const { panel } = await confirmFindAt(f, current);
         if (!shown) f.key('Escape');
         matchTops(f, { 0: 100, 4: 300, 8: 500, 12: 900 });
@@ -423,7 +399,7 @@ for (const fallback of [false, true]) {
         assert.equal(panel.hidden, true);
         assert.equal(f.window.document.activeElement, f.article);
         assert.equal(f.by.mock.callCount(), 0);
-        if (!fallback) assert.equal(f.registry.get('mjp-search').size, 4);
+        assert.equal(drawnRanges(f).all.length, 4);
       });
     }
   }
@@ -434,8 +410,7 @@ for (const fallback of [false, true]) {
   ]) {
     test(`${key} wraps when no match remains beyond the viewport boundary using ${display}`, async t => {
       const f = await setup(t);
-      if (fallback) f.window.CSS.highlights = undefined;
-      await confirmFindAt(f, 1);
+          await confirmFindAt(f, 1);
       matchTops(f, Object.fromEntries(tops.map((top, index) => [index * 4, top])));
       f.window.scrollY = scrollY;
       f.by.mock.resetCalls();
@@ -449,7 +424,6 @@ for (const fallback of [false, true]) {
     for (const key of ['n', 'N']) {
       test(`${key} chooses viewport matches in replacement content with shown=${shown} using ${display}`, async t => {
         const f = await setup(t);
-        if (fallback) f.window.CSS.highlights = undefined;
         const { panel } = await confirmFindAt(f, 0);
         if (!shown) f.key('Escape');
         f.setSnapshot(snapshot('new one one one one', 2));
@@ -482,7 +456,7 @@ for (const [position, tops, key, expected, scrolls = false] of [
     matchTops(f, Object.fromEntries(tops.map((top, index) => [index * 4, top])));
     f.by.mock.resetCalls();
     f.key(key);
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, expected * 4);
+    assert.equal(drawnRanges(f).current[0].startOffset, expected * 4);
     assert.equal(f.by.mock.callCount(), scrolls ? 1 : 0);
   });
 }
@@ -500,7 +474,7 @@ for (const key of ['n', 'N']) {
       f.by.mock.resetCalls();
       f.key(key);
       const expected = key === 'N' ? 3 : obstacle === 'visible banner' ? 2 : 1;
-      assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, expected * 4);
+      assert.equal(drawnRanges(f).current[0].startOffset, expected * 4);
       assert.equal(f.by.mock.callCount(), 0);
     });
   }
@@ -514,7 +488,7 @@ for (const key of ['n', 'N']) {
     await f.changed();
     f.by.mock.resetCalls();
     assert.equal(f.key(key).defaultPrevented, true);
-    assertNoSearchRanges(f.registry);
+    assertNoSearchMarks(f);
     assert.equal(panel.hidden, true);
     assert.equal(f.by.mock.callCount(), 0);
   });
@@ -551,18 +525,18 @@ for (const shown of [false, true]) {
       assert.equal(f.calls.includes('close'), false);
       assert.equal(f.frames.size, shown ? 1 : 0);
       if (shown) {
-        assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['old', 'old', 'old']);
-        assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
-      } else assertNoSearchRanges(f.registry);
-      const current = f.registry.get('mjp-search-current');
+        assert.deepEqual(drawnRanges(f).all.map(range => range.toString()), ['old', 'old', 'old']);
+        assert.equal(drawnRanges(f).current[0].startOffset, 4);
+      } else assertNoSearchMarks(f);
+      const current = drawnRanges(f).current;
       f.frame();
-      assert.equal(f.registry.get('mjp-search-current'), current);
+      assert.deepEqual(drawnRanges(f).current, current);
       assert.equal(f.frames.size, 0);
       if (shown) assert.equal(f.window.document.querySelector('.search-count').textContent, '[2/3]');
       assert.equal(f.by.mock.callCount(), 0);
       if (!shown) {
         f.key('n');
-        assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+        assert.equal(drawnRanges(f).current[0].startOffset, 8);
       }
     });
   }
@@ -582,13 +556,13 @@ for (const [text, count, offset] of [['old new old', 2, 8], ['new old', 1, 4], [
     assert.deepEqual(f.to.mock.calls.map(call => call.arguments), [[0, 180]]);
     assert.equal(f.by.mock.callCount(), 0);
     if (count) {
-      assert.equal(f.registry.get('mjp-search').size, count);
-      const range = [...f.registry.get('mjp-search-current')][0];
+      assert.equal(drawnRanges(f).all.length, count);
+      const range = drawnRanges(f).current[0];
       assert.equal(range.toString(), 'old');
       assert.equal(range.startOffset, offset);
       assert.equal(range.startContainer, f.article.querySelector('p').firstChild);
     } else {
-      assertNoSearchRanges(f.registry);
+      assertNoSearchMarks(f);
       f.key('f', { metaKey: true });
       assert.equal(panel.querySelector('[aria-live]').textContent, '0/0');
     }
@@ -606,7 +580,7 @@ for (const action of ['refocus', 'zero-result Enter']) {
     assert.equal(panel.hidden, false);
     f.key('Escape', {}, input);
     assert.equal(input.value, 'old');
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
+    assert.equal(drawnRanges(f).current[0].startOffset, 4);
     assert.equal(f.window.scrollY, 180);
     assert.equal(f.calls.includes('close'), false);
   });
@@ -618,10 +592,10 @@ test('Escape cancels to visible prior marks, then clears marks, then closes the 
   typeFind(f, input, 'new');
   f.key('Escape', {}, input);
   assert.equal(panel.hidden, true);
-  assert.equal([...f.registry.get('mjp-search-current')][0].toString(), 'old');
+  assert.equal(drawnRanges(f).current[0].toString(), 'old');
   assert.equal(f.calls.includes('close'), false);
   f.key('Escape');
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   assert.equal(f.calls.includes('close'), false);
   assert.equal(input.value, 'old');
   f.key('Escape');
@@ -634,7 +608,7 @@ test('Escape cancels to hidden prior marks and the following Escape closes immed
   typeFind(f, input, 'new');
   f.key('Escape', {}, input);
   assert.equal(input.value, 'old');
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   assert.equal(f.calls.includes('close'), false);
   f.key('Escape');
   assert.equal(f.calls.filter(call => call === 'close').length, 1);
@@ -663,7 +637,7 @@ for (const [scrollY, expectedOffset, expectedCount] of [[150, 4, '2/3'], [200, 4
     const { panel, input, count } = await openFind(f);
     typeFind(f, input, 'one');
     assert.equal(count.textContent, expectedCount);
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, expectedOffset);
+    assert.equal(drawnRanges(f).current[0].startOffset, expectedOffset);
     assert.equal(panel.hidden, false);
   });
 }
@@ -679,7 +653,7 @@ for (const obstacle of ['status', 'search panel']) {
     overlay.getBoundingClientRect = () => ({ top: 0, bottom: 50, left: 0, right: 800, width: 800, height: 50 });
     typeFind(f, input, 'one');
     assert.equal(count.textContent, '3/3');
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+    assert.equal(drawnRanges(f).current[0].startOffset, 8);
   });
 }
 
@@ -694,7 +668,7 @@ test('keeps incremental search anchored to its opening position after scrolling 
   f.key('f', { metaKey: true }, input);
   typeFind(f, input, 'one');
   assert.equal(count.textContent, '2/3');
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
+  assert.equal(drawnRanges(f).current[0].startOffset, 4);
 });
 
 test('reselects an existing query from the new origin before unedited Enter confirmation', async t => {
@@ -707,10 +681,10 @@ test('reselects an existing query from the new origin before unedited Enter conf
   f.window.scrollY = 350;
   f.key('f', { metaKey: true });
   assert.equal(count.textContent, '3/3');
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+  assert.equal(drawnRanges(f).current[0].startOffset, 8);
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+  assert.equal(drawnRanges(f).current[0].startOffset, 8);
   assert.equal(f.window.document.activeElement, f.article);
 });
 
@@ -721,12 +695,12 @@ for (const shiftKey of [false, true]) {
     typeFind(f, input, 'one');
     f.key('Enter', { shiftKey }, input);
     assert.equal(panel.hidden, true);
-    assert.equal(f.registry.get('mjp-search').size, 3);
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
+    assert.equal(drawnRanges(f).all.length, 3);
+    assert.equal(drawnRanges(f).current[0].startOffset, 0);
     assert.equal(f.window.document.activeElement, f.article);
     assert.equal(f.key('j').defaultPrevented, true);
     assert.equal(f.key('n').defaultPrevented, true);
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
+    assert.equal(drawnRanges(f).current[0].startOffset, 4);
   });
 }
 
@@ -736,7 +710,7 @@ test('releases the opening intent after confirmation so two Escapes clear marks 
   typeFind(f, input, 'one');
   f.key('Enter', {}, input);
   f.key('Escape');
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   assert.equal(f.calls.includes('close'), false);
   f.key('Escape');
   assert.equal(f.calls.filter(call => call === 'close').length, 1);
@@ -747,7 +721,7 @@ test('closes an empty query and releases the opening intent for the following Es
   const { panel, input } = await openFind(f);
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   assert.equal(f.window.document.activeElement, f.article);
   f.key('Escape');
   assert.equal(f.calls.filter(call => call === 'close').length, 1);
@@ -813,7 +787,7 @@ test('never initializes search when its module finishes loading after page exit'
   await settle();
   assert.equal(createSearch.mock.callCount(), 0);
   assert.equal(f.window.document.querySelector('[role="search"]'), null);
-  assert.equal(f.registry.size, 0);
+  assertNoSearchMarks(f);
   assert.equal(f.frames.size, 0);
   assert.equal(f.calls.filter(call => call === 'search').length, 1);
 });
@@ -849,15 +823,13 @@ test('ignores module loading failures delivered after page exit', async t => {
   assert.equal(f.status.hidden, previous.hidden);
   assert.equal(f.status.textContent, previous.text);
   assert.equal(f.window.document.querySelector('[role="search"]'), null);
-  assert.equal(f.registry.size, 0);
+  assertNoSearchMarks(f);
 });
 
 test('coalesces input into one search of the latest query per frame', async t => {
   const f = await setup(t);
   const { input, count } = await openFind(f, 'old old new new new');
   const createRange = t.mock.method(f.window.document, 'createRange');
-  const set = t.mock.method(f.registry, 'set');
-  const clears = [...f.registry.values()].map(highlight => t.mock.method(highlight, 'clear'));
   f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
   queueFind(f, input, 'old');
   queueFind(f, input, 'ne');
@@ -866,16 +838,13 @@ test('coalesces input into one search of the latest query per frame', async t =>
   assert.equal(createRange.mock.callCount(), 0);
   f.frame();
   assert.equal(count.textContent, '1/3');
-  assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['new', 'new', 'new']);
+  assert.deepEqual(drawnRanges(f).all.map(range => range.toString()), ['new', 'new', 'new']);
   assert.equal(createRange.mock.callCount(), 3);
-  assert.equal(set.mock.callCount(), 0);
-  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
   assert.equal(f.by.mock.callCount(), 1);
   assert.equal(f.frames.size, 0);
   f.frame();
   assert.equal(createRange.mock.callCount(), 3);
   assert.equal(f.by.mock.callCount(), 1);
-  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
 });
 
 for (const shiftKey of [false, true]) {
@@ -883,23 +852,18 @@ for (const shiftKey of [false, true]) {
     const f = await setup(t);
     const { panel, input } = await openFind(f, 'old old new new new');
     typeFind(f, input, 'old');
-    const set = t.mock.method(f.registry, 'set');
-    const clears = [...f.registry.values()].map(highlight => t.mock.method(highlight, 'clear'));
     f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
     queueFind(f, input, 'new');
     f.key('Enter', { shiftKey }, input);
     assert.equal(panel.hidden, true);
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
-    assert.equal(f.registry.get('mjp-search').size, 3);
-    assert.equal(f.window.document.activeElement, f.article);
     assert.equal(f.frames.size, 1);
+    assert.equal(drawnRanges(f).current[0].startOffset, 8);
+    assert.equal(drawnRanges(f).all.length, 3);
+    assert.equal(f.window.document.activeElement, f.article);
+    assert.equal(f.frames.size, 0);
     assert.equal(f.by.mock.callCount(), 1);
-    assert.equal(set.mock.callCount(), 0);
-    for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
     f.frame();
     assert.equal(f.by.mock.callCount(), 1);
-    assert.equal(set.mock.callCount(), 0);
-    for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
     assert.equal(f.window.document.querySelector('.search-count').textContent, '[1/3]');
   });
 }
@@ -916,7 +880,7 @@ test('reopens with the confirmed query after Escape discards a queued edit witho
   f.key('f', { metaKey: true });
   assert.equal(panel.hidden, false);
   assert.equal(count.textContent, '1/2');
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
+  assert.equal(drawnRanges(f).current[0].startOffset, 0);
   assert.equal(input.value, 'old');
   assert.equal(f.by.mock.callCount(), 0);
   assert.equal(f.frames.size, 0);
@@ -924,15 +888,13 @@ test('reopens with the confirmed query after Escape discards a queued edit witho
   assert.equal(f.by.mock.callCount(), 0);
 });
 
-for (const fallback of [false, true]) {
-  const display = fallback ? 'Selection' : 'CSS highlights';
+{
+  const display = 'overlay marks';
   test(`cancels queued input effects on Escape with ${display}`, async t => {
     const f = await setup(t);
-    if (fallback) f.window.CSS.highlights = undefined;
     const { panel, input } = await openFind(f, 'old old new new new');
     typeFind(f, input, 'old');
     f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
-    const set = t.mock.method(f.registry, 'set');
     queueFind(f, input, 'new');
     f.key('Escape', {}, input);
     assert.equal(f.frames.size, 0);
@@ -940,15 +902,13 @@ for (const fallback of [false, true]) {
     assert.equal(panel.hidden, true);
     assert.equal(input.value, '');
     assert.equal(f.by.mock.callCount(), 0);
-    assert.equal(set.mock.callCount(), 0);
-    assertNoSearchRanges(f.registry);
+    assertNoSearchMarks(f);
     assert.equal(f.window.getSelection().toString(), '');
   });
 
   for (const key of ['n', 'N']) {
     test(`uses the restored query for ${key} after canceling an edit with ${display}`, async t => {
       const f = await setup(t);
-      if (fallback) f.window.CSS.highlights = undefined;
       const { panel, input } = await openFind(f, 'old old new new new');
       typeFind(f, input, 'old');
       f.key('Enter', {}, input);
@@ -956,7 +916,7 @@ for (const fallback of [false, true]) {
       queueFind(f, input, 'new');
       f.key('Escape', {}, input);
       f.key(key);
-      const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+      const range = drawnRanges(f).current[0];
       assert.equal(range.toString(), 'old');
       assert.equal(range.startOffset, 4);
       assert.equal(panel.hidden, true);
@@ -967,7 +927,6 @@ for (const fallback of [false, true]) {
 
     test(`keeps the restored query across hidden replacement before ${key} with ${display}`, async t => {
       const f = await setup(t);
-      if (fallback) f.window.CSS.highlights = undefined;
       const { panel, input } = await openFind(f, 'old old new new new');
       typeFind(f, input, 'old');
       f.key('Enter', {}, input);
@@ -977,9 +936,9 @@ for (const fallback of [false, true]) {
       f.key('Escape');
       f.setSnapshot(snapshot('new and old and old', 2));
       await f.changed();
-      assertNoSearchRanges(f.registry);
+      assertNoSearchMarks(f);
       f.key(key);
-      const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+      const range = drawnRanges(f).current[0];
       assert.equal(range.toString(), 'old');
       assert.equal(range.startOffset, 16);
       assert.equal(range.startContainer, f.article.querySelector('p').firstChild);
@@ -989,7 +948,6 @@ for (const fallback of [false, true]) {
 
   test(`restores the confirmed query when an empty edit is canceled with ${display}`, async t => {
     const f = await setup(t);
-    if (fallback) f.window.CSS.highlights = undefined;
     const { panel, input } = await openFind(f, 'old old new new new');
     typeFind(f, input, 'old');
     f.key('Enter', {}, input);
@@ -999,7 +957,7 @@ for (const fallback of [false, true]) {
     f.key('n');
     f.frame();
     assert.equal(panel.hidden, true);
-    const range = fallback ? f.window.getSelection().getRangeAt(0) : [...f.registry.get('mjp-search-current')][0];
+    const range = drawnRanges(f).current[0];
     assert.equal(range.toString(), 'old');
     assert.equal(range.startOffset, 4);
     assert.equal(f.by.mock.callCount(), 0);
@@ -1010,23 +968,17 @@ test('absorbs a queued query into one replacement search without requesting scro
   const f = await setup(t);
   const { input, count } = await openFind(f, 'old old new new new');
   typeFind(f, input, 'old');
-  const set = t.mock.method(f.registry, 'set');
-  const clears = [...f.registry.values()].map(highlight => t.mock.method(highlight, 'clear'));
   const createRange = t.mock.method(f.window.document, 'createRange');
   queueFind(f, input, 'new');
   f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
   f.setSnapshot(snapshot('new and old and new', 2));
   await f.changed();
   assert.equal(count.textContent, '1/2');
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
-  assert.equal(set.mock.callCount(), 0);
-  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
+  assert.equal(drawnRanges(f).current[0].startOffset, 0);
   assert.equal(createRange.mock.callCount(), 2);
   assert.equal(f.by.mock.callCount(), 0);
   assert.equal(f.frames.size, 0);
   f.frame();
-  assert.equal(set.mock.callCount(), 0);
-  for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
   assert.equal(createRange.mock.callCount(), 2);
   assert.equal(f.by.mock.callCount(), 0);
 });
@@ -1037,229 +989,13 @@ test('cancels queued search work and removes highlights on page exit', async t =
   typeFind(f, input, 'old');
   queueFind(f, input, 'new');
   f.window.dispatchEvent(new f.window.Event('pagehide'));
-  const set = t.mock.method(f.registry, 'set');
   f.frame();
   queueFind(f, input, 'old');
   f.key('n');
   assert.equal(f.frames.size, 0);
-  assert.equal(set.mock.callCount(), 0);
-  assert.equal(f.registry.size, 0);
+  assertNoSearchMarks(f);
   assert.equal(f.window.document.querySelector('[role="search"]'), null);
   assert.equal(f.by.mock.callCount(), 0);
-});
-
-function selectArticleText(f, start, end) {
-  const node = f.article.querySelector('p').firstChild;
-  const range = f.window.document.createRange();
-  range.setStart(node, start);
-  range.setEnd(node, end);
-  const selection = f.window.getSelection();
-  selection.removeAllRanges();
-  selection.addRange(range);
-  return selection.getRangeAt(0);
-}
-
-for (const missing of ['CSS', 'highlights', 'Highlight']) {
-  test(`fallback keeps selection while typing and selects the confirmed match without ${missing}`, async t => {
-    const f = await setup(t);
-    if (missing === 'highlights') f.window.CSS.highlights = undefined;
-    else f.window[missing] = undefined;
-    const { panel, input, count } = await openFind(f, 'keep one one one');
-    const selection = f.window.getSelection();
-    const userRange = selectArticleText(f, 0, 4);
-    const addRange = t.mock.method(selection, 'addRange');
-    const removeRanges = t.mock.method(selection, 'removeAllRanges');
-    typeFind(f, input, 'one');
-    assert.equal(count.textContent, '1/3');
-    assert.equal(selection.getRangeAt(0), userRange);
-    assert.equal(selection.toString(), 'keep');
-    assert.equal(addRange.mock.callCount(), 0);
-    assert.equal(removeRanges.mock.callCount(), 0);
-    assert.equal(f.window.document.activeElement, input);
-    assert.equal(f.registry.size, 0);
-
-    assert.equal(f.key('c', { metaKey: true }, input).defaultPrevented, false);
-    assert.equal(f.key('Enter', {}, input).defaultPrevented, true);
-    assert.equal(panel.hidden, true);
-    assert.equal(selection.toString(), 'one');
-    assert.equal(selection.getRangeAt(0).startOffset, 5);
-    assert.equal(f.window.document.activeElement, f.article);
-    f.key('Escape');
-    assert.equal(selection.rangeCount, 0);
-    for (const [key, expectedOffset] of [['n', 9], ['N', 5]]) {
-      assert.equal(f.key(key).defaultPrevented, true);
-      assert.equal(selection.toString(), 'one');
-      assert.equal(selection.getRangeAt(0).startOffset, expectedOffset);
-      assert.equal(panel.hidden, true);
-      assert.equal(f.window.document.activeElement, f.article);
-    }
-    assert.equal(f.key('c', { metaKey: true }).defaultPrevented, false);
-    f.key('f', { metaKey: true });
-    f.key('Escape', {}, input);
-    f.key('Escape');
-    assert.equal(f.calls.includes('close'), false);
-    assert.equal(selection.rangeCount, 0);
-    assert.equal(f.registry.size, 0);
-  });
-}
-
-test('fallback preserves an existing user selection when search closes without navigation', async t => {
-  const f = await setup(t);
-  f.window.CSS.highlights = undefined;
-  const { input } = await openFind(f, 'keep one one one');
-  const range = selectArticleText(f, 0, 4);
-  typeFind(f, input, 'one');
-  f.key('Escape', {}, input);
-  assert.equal(f.window.getSelection().getRangeAt(0), range);
-  assert.equal(f.window.getSelection().toString(), 'keep');
-});
-
-for (const change of ['different range', 'same endpoints in a new range', 'changed endpoints in the same range']) {
-  test(`fallback preserves the user's ${change} when search highlights are cleared`, async t => {
-    const f = await setup(t);
-    f.window.CSS.highlights = undefined;
-    const { input } = await openFind(f, 'keep one one one');
-    typeFind(f, input, 'one');
-    f.key('Enter', {}, input);
-    const selection = f.window.getSelection();
-    assert.equal(selection.toString(), 'one');
-    const original = selection.getRangeAt(0);
-    let userRange;
-    if (change === 'changed endpoints in the same range') {
-      original.setStart(original.startContainer, 0);
-      original.setEnd(original.endContainer, 4);
-      userRange = original;
-    } else {
-      userRange = selectArticleText(f, change === 'different range' ? 0 : 5, change === 'different range' ? 4 : 8);
-      assert.notEqual(userRange, original);
-    }
-    const text = selection.toString();
-    f.key('Escape');
-    assert.equal(selection.getRangeAt(0), userRange);
-    assert.equal(selection.toString(), text);
-  });
-}
-
-test('fallback keeps the confirmed match selected with focus in the document', async t => {
-  const f = await setup(t);
-  f.window.CSS.highlights = undefined;
-  const { panel, input } = await openFind(f);
-  typeFind(f, input, 'one');
-  input.setSelectionRange(1, 1);
-  const selection = f.window.getSelection();
-  const addRange = selection.addRange;
-  t.mock.method(selection, 'addRange', range => {
-    addRange.call(selection, range);
-    f.article.focus({ preventScroll: true });
-  });
-  const focus = t.mock.method(f.article, 'focus');
-  f.key('Enter', {}, input);
-  assert.equal(panel.hidden, true);
-  assert.equal(selection.toString(), 'one');
-  assert.equal(f.window.document.activeElement, f.article);
-  assert.deepEqual(focus.mock.calls[0].arguments, [{ preventScroll: true }]);
-  assert.equal(selection.getRangeAt(0).startOffset, 0);
-  assert.equal(f.by.mock.callCount(), 0);
-});
-
-test('fallback keeps cached matches intact when the user adjusts the selected range in place', async t => {
-  const f = await setup(t);
-  f.window.CSS.highlights = undefined;
-  const { input } = await openFind(f, 'keep one one one');
-  typeFind(f, input, 'one');
-  f.key('Enter', {}, input);
-  const selection = f.window.getSelection();
-  const range = selection.getRangeAt(0);
-  range.setStart(range.startContainer, 0);
-  range.setEnd(range.endContainer, 4);
-  f.key('Escape');
-  assert.equal(selection.toString(), 'keep');
-  f.key('n');
-  assert.equal(selection.getRangeAt(0).startOffset, 9);
-  f.key('N');
-  assert.equal(selection.toString(), 'one');
-  assert.equal(selection.getRangeAt(0).startOffset, 5);
-});
-
-test('fallback leaves the previous selection while typing and declining a zero-result confirmation', async t => {
-  const f = await setup(t);
-  f.window.CSS.highlights = undefined;
-  const { panel, input, count } = await openFind(f);
-  typeFind(f, input, 'one');
-  f.key('Enter', {}, input);
-  const selection = f.window.getSelection();
-  assert.equal(selection.toString(), 'one');
-  const previous = selection.getRangeAt(0);
-  f.key('f', { metaKey: true });
-  typeFind(f, input, 'missing');
-  assert.equal(count.textContent, '0/0');
-  assert.equal(selection.getRangeAt(0), previous);
-  f.key('Enter', {}, input);
-  assert.equal(panel.hidden, false);
-  assert.equal(selection.getRangeAt(0), previous);
-});
-
-test('fallback leaves a user selection intact when a zero-result query is not confirmed', async t => {
-  const f = await setup(t);
-  f.window.CSS.highlights = undefined;
-  const { input } = await openFind(f, 'keep one one one');
-  typeFind(f, input, 'one');
-  f.key('Enter', {}, input);
-  assert.equal(f.window.getSelection().toString(), 'one');
-  f.key('f', { metaKey: true });
-  typeFind(f, input, 'missing');
-  const userRange = selectArticleText(f, 0, 4);
-  f.key('Enter', {}, input);
-  assert.equal(f.window.getSelection().getRangeAt(0), userRange);
-  assert.equal(f.window.getSelection().toString(), 'keep');
-});
-
-test('fallback preserves backward user selection through opening and closing search', async t => {
-  const f = await setup(t);
-  f.window.CSS.highlights = undefined;
-  const { input } = await openFind(f, 'keep one one one');
-  const node = f.article.querySelector('p').firstChild;
-  const selection = f.window.getSelection();
-  selection.setBaseAndExtent(node, 4, node, 0);
-  f.key('Escape', {}, input);
-  f.key('f', { metaKey: true });
-  assert.equal(selection.toString(), 'keep');
-  assert.equal(selection.anchorNode, node);
-  assert.equal(selection.anchorOffset, 4);
-  assert.equal(selection.focusNode, node);
-  assert.equal(selection.focusOffset, 0);
-  assert.equal(f.window.document.activeElement, input);
-});
-
-for (const userSelected of [false, true]) {
-  test(`fallback ${userSelected ? 'preserves user selection' : 'removes its own selection'} on page exit`, async t => {
-    const f = await setup(t);
-    f.window.CSS.highlights = undefined;
-    const { input } = await openFind(f, 'keep one one one');
-    typeFind(f, input, 'one');
-    f.key('Enter', {}, input);
-    const selection = f.window.getSelection();
-    assert.equal(selection.toString(), 'one');
-    const userRange = userSelected ? selectArticleText(f, 0, 4) : null;
-    f.window.dispatchEvent(new f.window.Event('pagehide'));
-    if (userSelected) {
-      assert.equal(selection.getRangeAt(0), userRange);
-      assert.equal(selection.toString(), 'keep');
-    } else assert.equal(selection.rangeCount, 0);
-    assert.equal(f.window.document.querySelector('[role="search"]'), null);
-  });
-}
-
-test('CSS highlights leave user selection untouched through confirmation and clearing', async t => {
-  const f = await setup(t);
-  const { input } = await openFind(f, 'keep one one one');
-  const range = selectArticleText(f, 0, 4);
-  typeFind(f, input, 'one');
-  f.key('Enter', {}, input);
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 5);
-  f.key('Escape');
-  assert.equal(f.window.getSelection().getRangeAt(0), range);
-  assert.equal(f.window.getSelection().toString(), 'keep');
 });
 
 test('starts the preview without initializing search', async t => {
@@ -1294,19 +1030,19 @@ test('updates results on input and keeps zero-result queries editable until an e
   const { panel, input, count } = await openFind(f, 'One one ONE');
   typeFind(f, input, 'one');
   assert.equal(count.textContent, '1/3');
-  assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['One', 'one', 'ONE']);
+  assert.deepEqual(drawnRanges(f).all.map(range => range.toString()), ['One', 'one', 'ONE']);
   typeFind(f, input, 'missing');
   assert.equal(count.textContent, '0/0');
   f.key('Enter', {}, input);
   assert.equal(count.textContent, '0/0');
   assert.equal(panel.hidden, false);
   assert.equal(f.window.document.activeElement, input);
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   typeFind(f, input, 'one');
   assert.equal(count.textContent, '1/3');
   typeFind(f, input, '');
   assert.equal(count.textContent, '0/0');
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
 });
@@ -1315,7 +1051,7 @@ test('leaves Enter and Shift+Enter available outside the search input without mo
   const f = await setup(t);
   const { input, count } = await openFind(f, '```js\nconst one = "one";\n```\n\n[one](https://example.com)');
   typeFind(f, input, 'one');
-  const current = f.registry.get('mjp-search-current');
+  const current = drawnRanges(f).current;
   assert.equal(count.textContent, '1/3');
   f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
   for (const target of [f.article.querySelector('button'), f.article.querySelector('a'), f.article]) {
@@ -1323,7 +1059,7 @@ test('leaves Enter and Shift+Enter available outside the search input without mo
     for (const options of [{}, { shiftKey: true }]) {
       assert.equal(f.key('Enter', options, target).defaultPrevented, false);
       assert.equal(count.textContent, '1/3');
-      assert.equal(f.registry.get('mjp-search-current'), current);
+      assert.deepEqual(drawnRanges(f).current, current);
       assert.equal(f.window.document.activeElement, target);
       assert.equal(f.by.mock.callCount(), 0);
     }
@@ -1363,7 +1099,7 @@ test('cancels search on Escape and restores the opening scroll before returning 
   assert.equal(f.key('Escape', {}, input).defaultPrevented, true);
   assert.equal(panel.hidden, true);
   assert.equal(input.value, '');
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   assert.equal(f.calls.includes('close'), false);
   assert.deepEqual(focus.mock.calls[0].arguments, [{ preventScroll: true }]);
   assert.equal(f.window.document.activeElement, f.article);
@@ -1383,7 +1119,7 @@ test('resumes n and N from the confirmed match and reselects on reopening', asyn
   f.key('Escape');
   for (const [key, offset] of [['n', 4], ['n', 8], ['N', 4]]) {
     assert.equal(f.key(key).defaultPrevented, true);
-    const [current] = f.registry.get('mjp-search-current');
+    const [current] = drawnRanges(f).current;
     assert.equal(current.startOffset, offset);
     assert.equal(panel.hidden, true);
     assert.equal(f.window.document.activeElement, f.article);
@@ -1406,7 +1142,7 @@ test('n and N do nothing without a search query and never initialize search', as
   f.key('n');
   f.key('N');
   assert.equal(panel.hidden, true);
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   assert.equal(f.by.mock.callCount(), 0);
 });
 
@@ -1457,16 +1193,16 @@ for (const [count, thirdPosition] of [[999, '3/999'], [1000, '3/1000'], [1001, '
     const total = Math.min(count, 1000);
     const suffix = count > total ? '+' : '';
     assert.equal(display.textContent, `1/${total}${suffix}`);
-    assert.equal(f.registry.get('mjp-search').size, total);
+    assert.equal(drawnRanges(f).all.length, total);
     f.key('Enter', { shiftKey: true }, input);
     assert.equal(panel.hidden, true);
     f.key('N');
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, total - 1);
+    assert.equal(drawnRanges(f).current[0].startOffset, total - 1);
     f.key('n');
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
+    assert.equal(drawnRanges(f).current[0].startOffset, 0);
     f.key('n');
     f.key('n');
-    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 2);
+    assert.equal(drawnRanges(f).current[0].startOffset, 2);
     f.window.scrollY = 40;
     f.setMatchRect(range => {
       const top = range.startOffset * 20 - f.window.scrollY;
@@ -1488,14 +1224,14 @@ test('refreshes shown results after replacement, retaining an in-range index wit
   f.setSnapshot(snapshot('one two one', 2));
   await f.changed();
   assert.equal(panel.hidden, true);
-  assert.equal(f.registry.get('mjp-search').size, 2);
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
-  assert.equal([...f.registry.get('mjp-search-current')][0].startContainer, f.article.querySelector('p').firstChild);
+  assert.equal(drawnRanges(f).all.length, 2);
+  assert.equal(drawnRanges(f).current[0].startOffset, 8);
+  assert.equal(drawnRanges(f).current[0].startContainer, f.article.querySelector('p').firstChild);
   assert.equal(f.by.mock.callCount(), 0);
   f.setSnapshot(snapshot('one', 3));
   await f.changed();
-  assert.equal(f.registry.get('mjp-search').size, 1);
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
+  assert.equal(drawnRanges(f).all.length, 1);
+  assert.equal(drawnRanges(f).current[0].startOffset, 0);
   assert.equal(f.by.mock.callCount(), 0);
 });
 
@@ -1507,14 +1243,14 @@ test('rebuilds hidden results on navigation after replacement without reopening 
   f.key('Escape');
   f.setSnapshot(snapshot('one and one', 2));
   await f.changed();
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   f.key('n');
   assert.equal(panel.hidden, true);
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+  assert.equal(drawnRanges(f).current[0].startOffset, 8);
   f.setSnapshot(snapshot('one plus one plus one', 3));
   await f.changed();
   assert.equal(panel.hidden, true);
-  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 9);
+  assert.equal(drawnRanges(f).current[0].startOffset, 9);
 });
 
 test('keeps search ranges on status-only updates and ignores older document revisions', async t => {
@@ -1523,17 +1259,17 @@ test('keeps search ranges on status-only updates and ignores older document revi
   typeFind(f, input, 'one');
   f.key('Enter', {}, input);
   f.key('n');
-  const all = f.registry.get('mjp-search');
-  const current = f.registry.get('mjp-search-current');
+  const all = drawnRanges(f).all;
+  const current = drawnRanges(f).current;
   f.setSnapshot(snapshot('one one one', 2, 'Cannot read file'));
   await f.changed();
   assert.equal(f.status.textContent, 'Cannot read file');
-  assert.equal(f.registry.get('mjp-search'), all);
-  assert.equal(f.registry.get('mjp-search-current'), current);
+  assert.deepEqual(drawnRanges(f).all, all);
+  assert.deepEqual(drawnRanges(f).current, current);
   f.setSnapshot(snapshot('old', 1));
   await f.changed();
-  assert.equal(f.registry.get('mjp-search'), all);
-  assert.equal(f.registry.get('mjp-search-current'), current);
+  assert.deepEqual(drawnRanges(f).all, all);
+  assert.deepEqual(drawnRanges(f).current, current);
   assert.equal(panel.hidden, true);
   assert.equal([...current][0].startOffset, 4);
 });
@@ -1559,7 +1295,7 @@ test('closes an emptied queued query synchronously on Enter and clears stale mar
   input.dispatchEvent(new f.window.Event('input', { bubbles: true }));
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
-  assertNoSearchRanges(f.registry);
+  assertNoSearchMarks(f);
   assert.equal(f.frames.size, 0);
 });
 
