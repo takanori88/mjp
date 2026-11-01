@@ -766,12 +766,12 @@ test('can open search from a copy button and returns focus to the article on Esc
   assert.equal(f.key('j').defaultPrevented, true);
 });
 
-for (const count of [searchModule.MAX_MATCHES - 1, searchModule.MAX_MATCHES, searchModule.MAX_MATCHES + 1]) {
-  test(`shows the provisional limit accurately and cycles within stored matches at ${count} matches`, async t => {
+for (const [count, thirdPosition] of [[999, '3/999'], [1000, '3/1000'], [1001, '3/1000+']]) {
+  test(`shows the 1000-match limit accurately and cycles within stored matches at ${count} matches`, async t => {
     const f = await setup(t);
     const { input, count: display } = await openFind(f, 'a'.repeat(count));
     typeFind(f, input, 'a');
-    const total = Math.min(count, searchModule.MAX_MATCHES);
+    const total = Math.min(count, 1000);
     const suffix = count > total ? '+' : '';
     assert.equal(display.textContent, `1/${total}${suffix}`);
     assert.equal(f.registry.get('mjp-search').size, total);
@@ -779,6 +779,10 @@ for (const count of [searchModule.MAX_MATCHES - 1, searchModule.MAX_MATCHES, sea
     assert.equal(display.textContent, `${total}/${total}${suffix}`);
     f.key('Enter', {}, input);
     assert.equal(display.textContent, `1/${total}${suffix}`);
+    f.key('Enter', {}, input);
+    f.key('Enter', {}, input);
+    assert.equal(display.textContent, thirdPosition);
+    assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 2);
   });
 }
 

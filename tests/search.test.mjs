@@ -21,8 +21,9 @@ test('findMatches keeps nonoverlapping document order and never crosses segments
   assert.throws(() => search.findMatches(['a'], 'a', 0), RangeError);
 });
 
-test('findMatches truncates only after the provisional limit is exceeded', () => {
-  const limit = 10000;
+test('findMatches truncates only after the confirmed 1000-match limit is exceeded', () => {
+  const limit = 1000;
+  assert.equal(search.MAX_MATCHES, limit);
   for (const count of [limit - 1, limit, limit + 1]) {
     const result = search.findMatches(['a'.repeat(count)], 'a', limit);
     assert.equal(result.starts.length, Math.min(count, limit));
@@ -149,7 +150,7 @@ test('collects plain-text content as one segment with offsets after line breaks'
   article.firstChild.append(node);
   const segments = search.collectSegments(article);
   assert.deepEqual(segments.map(segment => segment.text), [search.fold(text)]);
-  const ranges = rangesFor(segments, 'b\t😀');
+  const ranges = rangesFor(segments, 'b\t😀', 1024);
   assert.equal(ranges.length, 1024);
   assert.equal(ranges[0].startContainer, node);
   assert.equal(ranges[0].startOffset, 5);
@@ -215,15 +216,15 @@ test('registers all matches and the current match without changing any document 
   after.forEach((node, index) => assert.equal(node, nodes[index]));
 });
 
-test('creates and registers at most the provisional match limit worth of Ranges', t => {
+test('creates and registers at most 1000 match Ranges', t => {
   const { article, window } = articleFixture(t, '<pre></pre>');
   const highlights = fakeHighlights();
   const createRange = t.mock.method(window.document, 'createRange');
-  for (const count of [search.MAX_MATCHES - 1, search.MAX_MATCHES, search.MAX_MATCHES + 1]) {
+  for (const count of [999, 1000, 1001]) {
     article.firstChild.textContent = 'a'.repeat(count);
     const ranges = rangesFor(search.collectSegments(article), 'a');
-    assert.equal(ranges.length, Math.min(count, search.MAX_MATCHES));
-    assert.equal(createRange.mock.callCount(), Math.min(count, search.MAX_MATCHES));
+    assert.equal(ranges.length, Math.min(count, 1000));
+    assert.equal(createRange.mock.callCount(), Math.min(count, 1000));
     search.updateHighlights(highlights, ranges, ranges.length - 1);
     assert.equal(highlights.registry.get('mjp-search').length, ranges.length);
     assert.equal(highlights.registry.get('mjp-search-current')[0], ranges.at(-1));

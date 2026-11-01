@@ -10,7 +10,7 @@ export function fold(text: string): string {
 }
 
 export type Match = { segment: number; offset: number };
-export const MAX_MATCHES = 10000;
+export const MAX_MATCHES = 1000;
 
 export function step(index: number, count: number, direction: 1 | -1): number {
   if (count === 0) return -1;
