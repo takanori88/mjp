@@ -12,6 +12,26 @@
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: auto; }
+#document:focus { outline: none; }
+.search-marks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.search-marks[hidden] { display: none; }
+.search-mark {
+  position: absolute;
+  background: #ffed99;
+}
+.search-mark-current {
+  z-index: 1;
+  background: #ffb347;
+}
 body { margin: 0; }
 #status {
   position: sticky;
@@ -24,6 +44,50 @@ body { margin: 0; }
   font-size: 13px;
 }
 #status[hidden] { display: none; }
+.search-panel {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px #0003;
+  font-size: 13px;
+}
+.search-panel[hidden] { display: none; }
+.search-panel input {
+  min-width: 0;
+  width: 220px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: inherit;
+  color: inherit;
+  font: inherit;
+}
+.search-panel input:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.search-panel [aria-live] { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.search-count {
+  position: absolute;
+  z-index: 0;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.search-count[hidden] { display: none; }
 .markdown-body {
   max-width: 880px;
   min-height: 100vh;
@@ -188,6 +252,9 @@ body { margin: 0; }
     --surface: #282c32;
     --link: #72b7ff;
   }
+  .search-marks { mix-blend-mode: normal; }
+  .search-mark { background: rgba(255, 237, 153, 0.35); }
+  .search-mark-current { background: rgba(255, 179, 71, 0.55); }
   #status { color: #ffe2a3; background: #4c3b20; border-color: #7d6032; }
   .copy-tooltip { color: #ffffff; background: #3d444d; }
   .code-actions button[data-state="success"] { color: #3fb950; }
