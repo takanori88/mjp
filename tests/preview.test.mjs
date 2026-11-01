@@ -274,6 +274,7 @@ for (const event of ['resize', 'article size', 'status size', 'scroll', 'load', 
     typeFind(f, f.input, 'one');
     f.key('Enter', {}, f.input);
     f.frame();
+    f.frame();
     const current = f.registry.get('mjp-search-current');
     const articleBounds = f.article.getBoundingClientRect();
     const statusBounds = f.status.getBoundingClientRect();
@@ -305,7 +306,7 @@ test('coalesces badge placement separately from search and uses the latest match
   f.observers[0].notify(f.article);
   f.setMatchRect(badgeRect(260, 400));
   const layout = t.mock.method(f.window.Range.prototype, 'getClientRects');
-  assert.equal(f.frames.size, 1);
+  assert.equal(f.frames.size, 2);
   f.frame();
   assert.equal(layout.mock.callCount(), 2);
   assert.equal(f.badge.style.left, '408px');
@@ -549,7 +550,7 @@ for (const shown of [false, true]) {
       assert.deepEqual(f.to.mock.calls.map(call => call.arguments), [[0, 180]]);
       assert.equal(f.window.document.activeElement, f.article);
       assert.equal(f.calls.includes('close'), false);
-      assert.equal(f.frames.size, shown ? 1 : 0);
+      assert.equal(f.frames.size, shown ? 2 : 1);
       if (shown) {
         assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['old', 'old', 'old']);
         assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
@@ -557,6 +558,7 @@ for (const shown of [false, true]) {
       const current = f.registry.get('mjp-search-current');
       f.frame();
       assert.equal(f.registry.get('mjp-search-current'), current);
+      f.frame();
       assert.equal(f.frames.size, 0);
       if (shown) assert.equal(f.window.document.querySelector('.search-count').textContent, '[2/3]');
       assert.equal(f.by.mock.callCount(), 0);
@@ -871,11 +873,12 @@ test('coalesces input into one search of the latest query per frame', async t =>
   assert.equal(set.mock.callCount(), 0);
   for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
   assert.equal(f.by.mock.callCount(), 1);
-  assert.equal(f.frames.size, 0);
+  assert.equal(f.frames.size, 1);
   f.frame();
   assert.equal(createRange.mock.callCount(), 3);
   assert.equal(f.by.mock.callCount(), 1);
   for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
+  assert.equal(f.frames.size, 0);
 });
 
 for (const shiftKey of [false, true]) {
@@ -892,10 +895,11 @@ for (const shiftKey of [false, true]) {
     assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
     assert.equal(f.registry.get('mjp-search').size, 3);
     assert.equal(f.window.document.activeElement, f.article);
-    assert.equal(f.frames.size, 1);
+    assert.equal(f.frames.size, 2);
     assert.equal(f.by.mock.callCount(), 1);
     assert.equal(set.mock.callCount(), 0);
     for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
+    f.frame();
     f.frame();
     assert.equal(f.by.mock.callCount(), 1);
     assert.equal(set.mock.callCount(), 0);
@@ -919,7 +923,8 @@ test('reopens with the confirmed query after Escape discards a queued edit witho
   assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 0);
   assert.equal(input.value, 'old');
   assert.equal(f.by.mock.callCount(), 0);
-  assert.equal(f.frames.size, 0);
+  assert.equal(f.frames.size, 1);
+  f.frame();
   f.frame();
   assert.equal(f.by.mock.callCount(), 0);
 });
@@ -935,7 +940,8 @@ for (const fallback of [false, true]) {
     const set = t.mock.method(f.registry, 'set');
     queueFind(f, input, 'new');
     f.key('Escape', {}, input);
-    assert.equal(f.frames.size, 0);
+    assert.equal(f.frames.size, fallback ? 0 : 1);
+    f.frame();
     f.frame();
     assert.equal(panel.hidden, true);
     assert.equal(input.value, '');
@@ -1023,7 +1029,8 @@ test('absorbs a queued query into one replacement search without requesting scro
   for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
   assert.equal(createRange.mock.callCount(), 2);
   assert.equal(f.by.mock.callCount(), 0);
-  assert.equal(f.frames.size, 0);
+  assert.equal(f.frames.size, 1);
+  f.frame();
   f.frame();
   assert.equal(set.mock.callCount(), 0);
   for (const clear of clears) assert.equal(clear.mock.callCount(), 1);
@@ -1560,6 +1567,9 @@ test('closes an emptied queued query synchronously on Enter and clears stale mar
   f.key('Enter', {}, input);
   assert.equal(panel.hidden, true);
   assertNoSearchRanges(f.registry);
+  assert.equal(f.frames.size, 1);
+  f.frame();
+  f.frame();
   assert.equal(f.frames.size, 0);
 });
 
