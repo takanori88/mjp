@@ -19,6 +19,7 @@ mjp README.md
 - Highlights fenced code blocks for common languages.
 - Copies fenced code blocks with a button or keyboard activation.
 - Displays local PNG, JPEG, GIF, and WebP images referenced in Markdown.
+- Searches within the displayed document in Markdown and plain-text views.
 - Follows the system light or dark appearance.
 - Reloads the preview when the file changes, preserving the scroll position when possible.
 - Supports keyboard navigation and quick closing.
@@ -56,12 +57,26 @@ The CLI starts with one preview in its own process. Normal Finder launches are e
 
 | Shortcut | Action |
 | --- | --- |
-| `Esc`, `q`, `⌘W` | Close the current preview on macOS. |
+| `⌘F`, `/` | Open search in the current document. |
+| `Enter`, `Shift+Enter` | Move to the next or previous match while the search input has focus. |
+| `n`, `N` | Move to the next or previous match using the last query while search is closed. |
+| `Esc` | Close search if it is open; otherwise close the current preview. |
+| `q`, `⌘W` | Close the current preview on macOS. |
 | `⌘Q` | Quit all windows in this mjp process. |
 | `j`, `k` | Scroll down or up. |
 | `Ctrl+D`, `Ctrl+U` | Scroll down or up by half a window. |
 | `gg` | Jump to the top (press the two `g` keys within one second). |
 | `G` (`Shift+G`) | Jump to the bottom. |
+
+### Finding text
+
+Search appears only when opened. Typing updates the matches and scrolls to the first one. The panel shows the current position and count, such as `3/12` or `0/0`. Search keeps the first 1000 matches: exactly 1000 shows `3/1000`, while more shows `3/1000+`; navigation wraps within those stored matches.
+
+Search covers rendered text, including code, table cells, and link labels, in the current document. Matching ignores case and fullwidth ASCII forms, but does not cross paragraphs, list items, table cells, or explicit line breaks. Alt text for local images eligible for loading is excluded even if loading fails. Alt text for remote images and images beyond the 64-reference limit remains searchable.
+
+Reading shortcuts such as `j`, `k`, and `q` are inactive in the search input. `⌘F` refocuses the input and selects its query; Enter and Esc are left to the input method during IME composition. Esc removes search highlights and keeps the scroll position and query. After closing search, `n` or `N` restores the highlights and moves without showing the panel or count. Live reload searches again with the same query, keeping the match number if it still exists and otherwise returning to the first match, without requesting a search scroll.
+
+On WebViews without all-match highlight support, typing only scrolls to the first match. Moving with Enter, Shift+Enter, `n`, or `N` selects the current match in the document. Enter keeps focus in the search input; Esc clears only the selection search set, preserving a selection you made afterward. `⌘C` uses the WebView's normal copy behavior for the focused input or document selection.
 
 ### Copying code
 

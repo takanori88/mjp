@@ -10,7 +10,7 @@ On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Previ
 
 ## 1. Requirements and completion criteria
 
-`mjp <file>` opens one Markdown file, returns the shell prompt without waiting for the GUI, and closes that preview immediately on `Esc`. Phase 1 has no editor or file management features.
+`mjp <file>` opens one Markdown file and returns the shell prompt without waiting for the GUI. `Esc` closes document search if it is open, otherwise that preview. Phase 1 has no editor or file management features.
 
 | Area | Phase 1 requirement |
 | --- | --- |
@@ -19,7 +19,7 @@ On 2026-10-08, the project was renamed from `mdq` to `mjp` (Markdown. Just Previ
 | Code | Highlight fenced code in common languages. Render unknown languages as escaped plain text. |
 | Appearance | Follow the OS light/dark setting. Prioritize readable content width, line spacing, heading hierarchy, code, and tables. Do not add a toolbar, sidebar, tabs, or settings UI. |
 | Reload | Detect saves and redraw automatically. Show a small in-window error if the file is deleted or cannot be read, then recover when it returns. Preserve scroll position if practical. |
-| Close | Close the current window on `Esc`, macOS `Cmd+W`, or the normal window close action. Exit when no windows or unfinished open requests remain; macOS `Cmd+Q` quits the whole process. Consider `Ctrl+W` when Windows/Linux support is implemented. |
+| Close | Close the current window on `Esc` when search is closed, macOS `Cmd+W`, or the normal window close action. With search open, `Esc` closes only search. Exit when no windows or unfinished open requests remain; macOS `Cmd+Q` quits the whole process. Consider `Ctrl+W` when Windows/Linux support is implemented. |
 | Performance | Measure startup time. Set a formal threshold after initial measurements on the target machine, and prioritize performance improvements over added features. |
 
 The exclusions in [PROJECT.md](PROJECT.md), sections 6, 7, 12, and 14, still apply. Mermaid, KaTeX, multiple CLI file arguments, and automated distribution remain later-stage work. Finder requests now support separate previews for multiple files as described below. One-shot standard input is now supported as described below. Images were not part of the initial minimum display requirements. Local raster images are now supported for Markdown reading sessions, as described below; remote images and raw HTML remain outside the scope.
@@ -78,6 +78,35 @@ The image scope is the nearest ancestor containing a `.git` marker, or the Markd
 
 Read each image with the existing 10 MiB file-size ceiling, including a bounded read for files that grow. Fetch images sequentially after text rendering, reuse Blob URLs for repeated sources, and revoke them on document replacement or page exit. Ignore old results after replacement. Allow at most 64 image occurrences and 32 MiB of distinct encoded image bytes per rendering; stop fetching new sources when the aggregate limit is reached. These are transfer and retention limits, not a bound on image decoding time or expanded pixel memory. Image-only saves are not watched in this first implementation; closing and reopening the preview or changing the Markdown text reloads images. Images do not load in the large-document plain-text mode.
 
+### Search within the displayed document
+
+Document search (Issue #34) covers the rendered text of one preview in either Markdown or plain-text mode. Open a transient panel with `⌘F` or `/`; use Enter/Shift+Enter only in its input and `n`/`N` after closing it. Reading shortcuts do not run in the input, and Enter/Esc remain with the input method during IME composition. Regular expressions, whole-word matching, replacement, history, and cross-file search are outside this feature. The [README](../../README.md#finding-text) describes the controls.
+
+Use the CSS Custom Highlight API to mark all matches and the current match without wrapping or replacing document nodes. This preserves highlighted code, copy buttons, and link actions. Collect text segments at block boundaries, list items, table cells, explicit `br` breaks, and excluded subtrees; matches can cross inline nodes within a segment but never these boundaries. Outside `pre`, collapse runs of U+0020, tab, LF, and CR across text nodes to one space and trim segment edges; retain NBSP and U+3000. Inside `pre`, preserve whitespace and newlines. Map a collapsed space to the complete original whitespace run, including both endpoints across nodes, so the Range covers whichever part the layout displays. Keep contiguous text runs instead of a per-character table, particularly for a 10 MiB plain-text node. Exclude code actions, direction notes, and the search panel from collected text.
+
+Fold U+FF01–FF5E to ASCII first, then lowercase each UTF-16 unit only when its lowercase form is one unit. Leave surrogates and length-expanding lowercase forms such as U+0130 unchanged. This equates `Ａ`, `ａ`, `A`, and `a` without changing DOM offsets. Do not use NFKC, which introduces broader compatibility substitutions and can change length, or equate hiragana and katakana, which would broaden the promised case-and-width matching to distinct text.
+
+Exclude the local-image placeholder subtree (`[data-mjp-image]`) and its alt text, whether loading succeeds or fails, because asynchronous image replacement must not change search results. Remote images and references beyond the image-count cap remain ordinary text from the renderer and are searchable.
+
+Keep at most **1000 nonoverlapping matches** and their Ranges in document order. Only finding the 1001st match sets the truncated flag: exactly 1000 displays `3/1000`, more displays `3/1000+`, and navigation wraps within the stored results. A zero-result query displays `0/0`. Counts are visible only while the panel is open. The cap bounds retained match positions and Range creation, not collection or the full scan needed for no-match and sparse-match queries.
+
+The 1000-match cap was selected from Node v24.22.1 and jsdom 30.1.3 measurements on macOS arm64 on 2026-11-01. The inputs were ASCII fixtures of 10 MiB plain text and 128 KiB Markdown, with no matches, ten matches, and repeated `a` text queried with `a`. The Markdown includes headings, emphasis, links, lists, tables, and code, producing 505 segments and 125,695 dense matches. Each condition used two warmups and seven timed trials with a fresh attached DOM clone, excluding rendering and preparation from the timer. Median Range creation times for dense matches were:
+
+| Input | 1000 Ranges | 10000 Ranges | 100000 Ranges |
+| --- | ---: | ---: | ---: |
+| 10 MiB plain text | 2.12 ms | 12.97 ms | 110.51 ms |
+| 128 KiB Markdown | 2.41 ms | 13.93 ms | 109.42 ms |
+
+Keeping 1000 matches leaves more time for highlight registration and painting. Collection and folding took about 6.7–6.9 ms for plain text and 17.0–18.6 ms for Markdown; no-match and ten-match scans took at most about 0.3 ms. Cache segments and folded strings until the document nodes change, so collection is not repeated on every input. These are jsdom timings, excluding actual highlight registration, layout, and painting; they do not establish WKWebView interaction latency or a startup threshold.
+
+Keep panel visibility separate from highlight visibility. Closing search removes its marks, keeps the query and match index, and returns focus to the article with `preventScroll`; `n`/`N` restore marks and move without reopening the panel or count. Track segment freshness separately from query-result freshness so a canceled input still takes effect before reopening or navigating. A changed query resets to the first match; a replacement retains an in-range index and otherwise returns to the first match. Before stepping, finish any pending search against the latest query and document. If a canceled query change is first applied by `n`/`N`, move to its first/last match rather than stepping from an old index.
+
+Load the search module dynamically on first use; its UI creation and document collection stay off the startup path, and the build emits a separate search chunk. Share one loading/initialization promise and apply the latest open/close intent. Coalesce input searches with `requestAnimationFrame`. A document replacement absorbs a queued search into one refresh, while unchanged content and old revisions do not invalidate results. Opening search and refreshing after replacement request no scroll; explicit navigation and input reveal obscured matches using Range geometry, accounting for the status banner, search panel, and horizontal code/table scrollers. Already visible matches need no scroll. Escape cancels queued input effects, and page exit cancels work and removes marks; late loading success or failure must not update a disposed search.
+
+Detect `CSS.highlights` and the `Highlight` constructor at search initialization rather than selecting behavior by OS version. When unavailable, show only the current match through Selection on Enter/Shift+Enter or closed-panel `n`/`N`; typing scrolls without setting Selection. Keep focus in the search input after Enter. Record the selected Range identity and anchor/focus endpoints so closing search clears only its own selection, preserving user reselection. Give Selection a clone so user adjustments cannot mutate cached matches, and preserve document selection across focus changes. Leave `⌘C` to the WebView's normal input/document copying behavior.
+
+DOM tests cover these contracts with controlled promises, animation frames, registries, Selection, and rectangles. WKWebView highlight rendering (including multiline and horizontally clipped matches), `⌘F` menu handling, IME Enter/Esc, overlay occlusion, fallback input/focus/selection and native `⌘C`, 10 MiB interaction latency, and a `first_render` startup comparison remain unverified for this feature.
+
 ### Alternative architecture
 
 SwiftUI plus WKWebView might yield an even smaller macOS-only design, but would require revisiting the Windows/Linux plan. The first choice is Tauri 2, Vanilla TypeScript, and Vite. React adds little for a view with only document, error, and theme state. Vite is needed for builds, not at runtime; installed users should not need Node.js or a development server. If Tauri/WebView startup dominates, measure it before changing frontend frameworks.
@@ -98,7 +127,7 @@ terminal: mjp README.md
 - On macOS release builds, the CLI starts the same executable as a detached GUI child using the validated absolute path, then exits. The GUI remains while it has windows or unfinished open requests. `tauri dev` stays in the foreground to keep the development server running. There is no daemon, localhost server, sidecar, or single-instance plugin. Two invocations create independent previews. Design and test Windows/Linux startup separately during porting.
 - On initial load, each WebView subscribes to its own change events before fetching the text. If an event overlaps a read, reread once to avoid missing a save. Events request a reread rather than carrying the entire document.
 - Keep Tauri command and event wiring in `main.ts`, and pass those operations to the preview controller. This lets DOM tests exercise the same loading, rendering, keyboard, and link handlers as the app without starting a native window. Only the latest requested read may update content or its error banner, including when earlier requests finish later.
-- `Esc` and other shortcuts use small frontend handlers to request closing the current window. The native window close path uses the same per-window cleanup and idle-exit condition; check for orphaned processes on macOS.
+- `Esc` first closes document search if open; otherwise it and the window-close shortcuts use small frontend handlers to request closing the current window. The native window close path uses the same per-window cleanup and idle-exit condition; check for orphaned processes on macOS.
 - Use a window about 800 px wide for each document, with a CSS limit on content width. Adapt to narrower screens. Begin with the standard title bar; do not build a custom one before measuring startup and interaction.
 - Plain and modifier clicks keep opening supported links in the default application. Auxiliary link clicks and drops have no preview action. DOM drop handlers cover the entire window, including margins. Keep Tauri's native drag-drop handling enabled as before; this setting controls native event handling rather than declaring whether the application accepts drops.
 
