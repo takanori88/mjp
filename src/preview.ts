@@ -11,6 +11,7 @@ type PreviewBridge = {
   openExternal: (url: string) => Promise<unknown>;
   writeText: WriteText;
   mark?: (stage: string) => void;
+  loadSearch?: () => Promise<typeof import("./search.ts")>;
 };
 
 export async function startPreview(
@@ -29,13 +30,45 @@ export async function startPreview(
   );
 
   let requestNumber = 0;
+  let search: ReturnType<typeof import("./search.ts")["createSearch"]> | undefined;
+  let searchLoading: Promise<void> | undefined;
+  let searchWanted = false;
+  let disposed = false;
+
+  function openSearch(): void {
+    if (disposed) return;
+    searchWanted = true;
+    if (search) {
+      search.open();
+      return;
+    }
+    searchLoading ??= (bridge.loadSearch?.() ?? import("./search.ts")).then(module => {
+      if (disposed) return;
+      const highlights = window.CSS?.highlights && typeof window.Highlight === "function"
+        ? { registry: window.CSS.highlights, create: (ranges: Range[]) => new window.Highlight(...ranges) }
+        : undefined;
+      search = module.createSearch(article, { status, highlights });
+      if (searchWanted) search.open();
+    }).catch(error => {
+      searchLoading = undefined;
+      searchWanted = false;
+      status.hidden = false;
+      status.textContent = `Cannot open search: ${String(error)}`;
+    });
+  }
+
+  window.addEventListener("pagehide", () => {
+    disposed = true;
+    searchWanted = false;
+    search?.dispose();
+  });
 
   async function load(): Promise<void> {
     const number = ++requestNumber;
     try {
       const snapshot = await bridge.getDocument();
       bridge.mark?.("document_received");
-      if (number === requestNumber) render(snapshot);
+      if (number === requestNumber && render(snapshot)) search?.documentReplaced();
     } catch (error) {
       if (number !== requestNumber) return;
       status.hidden = false;
@@ -48,9 +81,49 @@ export async function startPreview(
     'button, input, select, textarea, [contenteditable], [role="textbox"], [role="combobox"], [role="searchbox"], [role="spinbutton"]';
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" || (event.metaKey && event.key.toLowerCase() === "w")) {
+    if (
+      (event.metaKey && event.key.toLowerCase() === "w") ||
+      (event.key === "Escape" && !search?.isOpen && !searchWanted)
+    ) {
       event.preventDefault();
+      firstGAt = 0;
       void bridge.close();
+      return;
+    }
+
+    if (event.defaultPrevented) {
+      firstGAt = 0;
+      return;
+    }
+
+    if (event.key === "Escape") {
+      firstGAt = 0;
+      if (event.isComposing) return;
+      event.preventDefault();
+      searchWanted = false;
+      search?.close();
+      return;
+    }
+
+    if (event.isComposing) {
+      firstGAt = 0;
+      return;
+    }
+
+    if (event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      firstGAt = 0;
+      openSearch();
+      return;
+    }
+
+    if (
+      search?.isOpen && event.target === search.input && event.key === "Enter" &&
+      !event.metaKey && !event.altKey && !event.ctrlKey
+    ) {
+      event.preventDefault();
+      firstGAt = 0;
+      search.move(event.shiftKey ? -1 : 1);
       return;
     }
 
@@ -85,6 +158,14 @@ export async function startPreview(
 
     firstGAt = 0;
     switch (event.key) {
+      case "/":
+        event.preventDefault();
+        openSearch();
+        break;
+      case "n":
+      case "N":
+        if (!search?.isOpen && search?.move(event.key === "n" ? 1 : -1)) event.preventDefault();
+        break;
       case "j":
       case "k":
         event.preventDefault();

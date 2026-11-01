@@ -180,3 +180,179 @@ export function updateHighlights(highlights: SearchHighlights, ranges: Range[], 
     registry.set("mjp-search-current", current);
   } else registry.delete("mjp-search-current");
 }
+
+function revealMatch(range: Range, article: HTMLElement, overlays: HTMLElement[]): void {
+  const view = article.ownerDocument.defaultView!;
+  for (let ancestor = range.startContainer.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const overflow = view.getComputedStyle(ancestor).overflowX;
+    if ((overflow === "auto" || overflow === "scroll") && ancestor.clientWidth > 0) {
+      const bounds = ancestor.getBoundingClientRect();
+      const left = bounds.left + ancestor.clientLeft;
+      const match = range.getBoundingClientRect();
+      if (match.left < left || match.right > left + ancestor.clientWidth) {
+        ancestor.scrollLeft += match.left - left - Math.max(0, (ancestor.clientWidth - match.width) / 2);
+      }
+    }
+    if (ancestor === article) break;
+  }
+
+  const match = range.getBoundingClientRect();
+  let top = 0;
+  let obscured = false;
+  for (const overlay of overlays) {
+    if (overlay.hidden) continue;
+    const bounds = overlay.getBoundingClientRect();
+    if (bounds.bottom > 0 && bounds.top < view.innerHeight && match.left < bounds.right && match.right > bounds.left) {
+      top = Math.max(top, bounds.bottom);
+      obscured ||= match.top < bounds.bottom && match.bottom > bounds.top;
+    }
+  }
+  if (match.top < 0 || match.bottom > view.innerHeight || obscured) {
+    view.scrollBy(0, (match.top + match.bottom) / 2 - (top + view.innerHeight) / 2);
+  }
+}
+
+type SearchOptions = {
+  highlights?: SearchHighlights;
+  status?: HTMLElement;
+};
+
+export function createSearch(article: HTMLElement, options: SearchOptions = {}) {
+  const document = article.ownerDocument;
+  const view = document.defaultView!;
+  const panel = document.createElement("div");
+  panel.className = "search-panel";
+  panel.setAttribute("role", "search");
+  panel.hidden = true;
+  const input = document.createElement("input");
+  input.type = "search";
+  input.setAttribute("aria-label", "Find in document");
+  input.placeholder = "Find in document";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  const count = document.createElement("span");
+  count.setAttribute("aria-live", "polite");
+  count.setAttribute("aria-atomic", "true");
+  panel.append(input, count);
+  article.before(panel);
+  article.tabIndex = -1;
+
+  let shown = false;
+  let segmentsStale = true;
+  let matchesStale = true;
+  let queryChanged = false;
+  let query = "";
+  let index = -1;
+  let segments: SearchSegment[] = [];
+  let ranges: Range[] = [];
+  let truncated = false;
+  let frame: number | undefined;
+  let disposed = false;
+
+  function cancelSearch(): void {
+    if (frame !== undefined) view.cancelAnimationFrame(frame);
+    frame = undefined;
+  }
+
+  function ensureFresh(): boolean {
+    const changed = queryChanged;
+    if (segmentsStale) {
+      segments = collectSegments(article);
+      segmentsStale = false;
+    }
+    if (matchesStale) {
+      const folded = fold(query);
+      const result = findMatches(segments.map(segment => segment.text), folded, MAX_MATCHES);
+      ranges = createMatchRanges(segments, result.starts, folded.length);
+      truncated = result.truncated;
+      index = retain(queryChanged ? -1 : index, ranges.length);
+      matchesStale = false;
+      queryChanged = false;
+    }
+    return changed;
+  }
+
+  function paint(): void {
+    if (!panel.hidden) count.textContent = `${index + 1}/${ranges.length}${truncated ? "+" : ""}`;
+    if (options.highlights) updateHighlights(options.highlights, shown ? ranges : [], index);
+  }
+
+  function reveal(): void {
+    if (ranges[index]) revealMatch(ranges[index], article, options.status ? [panel, options.status] : [panel]);
+  }
+
+  function onInput(): void {
+    if (disposed || panel.hidden || input.value === query) return;
+    query = input.value;
+    matchesStale = true;
+    queryChanged = true;
+    if (frame === undefined) {
+      frame = view.requestAnimationFrame(() => {
+        frame = undefined;
+        if (disposed || panel.hidden) return;
+        ensureFresh();
+        paint();
+        reveal();
+      });
+    }
+  }
+  input.addEventListener("input", onInput);
+
+  return {
+    get input(): HTMLInputElement { return input; },
+    get isOpen(): boolean { return !panel.hidden; },
+    open(): void {
+      if (disposed) return;
+      cancelSearch();
+      panel.hidden = false;
+      shown = true;
+      ensureFresh();
+      paint();
+      input.value = query;
+      input.focus({ preventScroll: true });
+      input.select();
+    },
+    close(): void {
+      if (disposed) return;
+      cancelSearch();
+      panel.hidden = true;
+      shown = false;
+      paint();
+      article.focus({ preventScroll: true });
+    },
+    move(direction: 1 | -1): boolean {
+      if (disposed || (!query && panel.hidden)) return false;
+      cancelSearch();
+      const changed = ensureFresh();
+      index = step(panel.hidden && changed ? -1 : index, ranges.length, direction);
+      shown = true;
+      paint();
+      reveal();
+      return true;
+    },
+    documentReplaced(): void {
+      if (disposed) return;
+      cancelSearch();
+      segments = [];
+      ranges = [];
+      segmentsStale = true;
+      matchesStale = true;
+      if (shown) {
+        ensureFresh();
+        paint();
+      }
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      cancelSearch();
+      shown = false;
+      panel.hidden = true;
+      paint();
+      input.removeEventListener("input", onInput);
+      panel.remove();
+      segments = [];
+      ranges = [];
+    },
+  };
+}

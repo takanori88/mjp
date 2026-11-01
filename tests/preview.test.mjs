@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { JSDOM } from 'jsdom';
+import * as searchModule from '../src/search.ts';
 
 globalThis.window = new JSDOM().window;
 const { startPreview } = await import('../src/preview.ts');
@@ -13,6 +14,15 @@ async function setup(t, deferred = false) {
   const status = window.document.querySelector('aside');
   const by = t.mock.method(window, 'scrollBy', () => {});
   const to = t.mock.method(window, 'scrollTo', () => {});
+  const registry = new Map();
+  window.CSS = { highlights: registry };
+  window.Highlight = class extends Set { constructor(...ranges) { super(ranges); } };
+  const frames = new Map();
+  let frameNumber = 0;
+  window.requestAnimationFrame = callback => { frames.set(++frameNumber, callback); return frameNumber; };
+  window.cancelAnimationFrame = id => { frames.delete(id); };
+  let matchRect = { top: 100, bottom: 120, left: 100, right: 140, width: 40, height: 20 };
+  window.Range.prototype.getBoundingClientRect = () => typeof matchRect === 'function' ? matchRect() : matchRect;
   const pending = [];
   const calls = [];
   let changed;
@@ -26,6 +36,7 @@ async function setup(t, deferred = false) {
     close: async () => { calls.push('close'); },
     openExternal: async url => { calls.push(['open', url]); },
     writeText: async text => { calls.push(['copy', text]); },
+    loadSearch: async () => { calls.push('search'); return searchModule; },
   });
   await new Promise(resolve => setImmediate(resolve));
   if (!deferred) await boot;
@@ -35,7 +46,13 @@ async function setup(t, deferred = false) {
     target.dispatchEvent(event);
     return event;
   };
-  return { window, article, status, calls, pending, boot, by, to, key,
+  return { window, article, status, calls, pending, boot, by, to, key, registry, frames,
+    frame: () => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      callbacks.forEach(callback => callback(0));
+    },
+    setMatchRect: rect => { matchRect = rect; },
     changed: () => changed(), setSnapshot: value => { current = value; } };
 }
 
@@ -58,6 +75,385 @@ test('subscribes before reading and renders subsequent document notifications', 
   assert.equal(f.status.hidden, true);
   assert.equal(f.article.querySelector('h1').textContent, 'Recreated');
 });
+
+async function openFind(f, text = 'one one one', key = '/') {
+  f.setSnapshot(snapshot(text, 1));
+  await f.changed();
+  f.by.mock.resetCalls();
+  f.to.mock.resetCalls();
+  assert.equal(f.key(key, key === 'f' ? { metaKey: true } : {}).defaultPrevented, true);
+  await new Promise(resolve => setImmediate(resolve));
+  const panel = f.window.document.querySelector('[role="search"]');
+  assert.ok(panel);
+  return { panel, input: panel.querySelector('input'), count: panel.querySelector('[aria-live="polite"]') };
+}
+
+function typeFind(f, input, value) {
+  input.value = value;
+  input.dispatchEvent(new f.window.Event('input', { bubbles: true }));
+  f.frame();
+}
+
+test('starts the preview without initializing search', async t => {
+  const f = await setup(t);
+  assert.equal(f.calls.includes('search'), false);
+  assert.equal(f.window.document.querySelector('[role="search"]'), null);
+});
+
+for (const key of ['/', 'f']) {
+  test(`opens a transient search panel with ${key === 'f' ? 'Cmd+F' : key} without scrolling`, async t => {
+    const f = await setup(t);
+    const { panel, input, count } = await openFind(f, 'One one', key);
+    assert.equal(panel.hidden, false);
+    assert.equal(input.type, 'search');
+    assert.ok(input.getAttribute('aria-label'));
+    assert.equal(f.window.document.activeElement, input);
+    assert.equal(count.textContent, '0/0');
+    assert.equal(f.by.mock.callCount(), 0);
+    assert.equal(f.to.mock.callCount(), 0);
+    typeFind(f, input, 'ＯＮＥ');
+    assert.equal(count.textContent, '1/2');
+    input.setSelectionRange(1, 1);
+    f.key('f', { metaKey: true }, input);
+    assert.equal(input.selectionStart, 0);
+    assert.equal(input.selectionEnd, 3);
+    assert.equal(f.window.document.querySelectorAll('[role="search"]').length, 1);
+  });
+}
+
+test('updates results on input and cycles with Enter and Shift+Enter', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f, 'One one ONE');
+  typeFind(f, input, 'one');
+  assert.equal(count.textContent, '1/3');
+  assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['One', 'one', 'ONE']);
+  for (const [options, expected] of [[{}, '2/3'], [{}, '3/3'], [{}, '1/3'], [{ shiftKey: true }, '3/3']]) {
+    assert.equal(f.key('Enter', options, input).defaultPrevented, true);
+    assert.equal(count.textContent, expected);
+    assert.equal(f.window.document.activeElement, input);
+  }
+  typeFind(f, input, 'missing');
+  assert.equal(count.textContent, '0/0');
+  f.key('Enter', {}, input);
+  assert.equal(count.textContent, '0/0');
+  assert.equal(f.registry.has('mjp-search-current'), false);
+  typeFind(f, input, 'one');
+  assert.equal(count.textContent, '1/3');
+  typeFind(f, input, '');
+  assert.equal(count.textContent, '0/0');
+  assert.equal(f.registry.has('mjp-search'), false);
+});
+
+test('leaves Enter and Shift+Enter available outside the search input without moving the match', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f, '```js\nconst one = "one";\n```\n\n[one](https://example.com)');
+  typeFind(f, input, 'one');
+  const current = f.registry.get('mjp-search-current');
+  assert.equal(count.textContent, '1/3');
+  f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+  for (const target of [f.article.querySelector('button'), f.article.querySelector('a'), f.article]) {
+    target.focus();
+    for (const options of [{}, { shiftKey: true }]) {
+      assert.equal(f.key('Enter', options, target).defaultPrevented, false);
+      assert.equal(count.textContent, '1/3');
+      assert.equal(f.registry.get('mjp-search-current'), current);
+      assert.equal(f.window.document.activeElement, target);
+      assert.equal(f.by.mock.callCount(), 0);
+    }
+  }
+});
+
+test('keeps reading and search shortcuts available for typing inside the search input', async t => {
+  const f = await setup(t);
+  const { input } = await openFind(f);
+  for (const key of ['j', 'k', 'q', '/', 'n', 'N', 'g', 'G']) {
+    assert.equal(f.key(key, {}, input).defaultPrevented, false);
+  }
+  assert.equal(f.calls.includes('close'), false);
+  assert.equal(f.by.mock.callCount(), 0);
+  assert.equal(f.to.mock.callCount(), 0);
+});
+
+test('leaves Enter and Escape to IME composition while search is open', async t => {
+  const f = await setup(t);
+  const { panel, input, count } = await openFind(f);
+  typeFind(f, input, 'one');
+  for (const key of ['Enter', 'Escape']) {
+    assert.equal(f.key(key, { isComposing: true }, input).defaultPrevented, false);
+    assert.equal(count.textContent, '1/3');
+    assert.equal(panel.hidden, false);
+    assert.equal(f.window.document.activeElement, input);
+    assert.equal(f.calls.includes('close'), false);
+  }
+});
+
+test('closes only search on Escape and returns focus without moving the document', async t => {
+  const f = await setup(t);
+  const { panel, input } = await openFind(f);
+  typeFind(f, input, 'one');
+  f.by.mock.resetCalls();
+  const focus = t.mock.method(f.article, 'focus');
+  assert.equal(f.key('Escape', {}, input).defaultPrevented, true);
+  assert.equal(panel.hidden, true);
+  assert.equal(f.registry.has('mjp-search'), false);
+  assert.equal(f.registry.has('mjp-search-current'), false);
+  assert.equal(f.calls.includes('close'), false);
+  assert.deepEqual(focus.mock.calls[0].arguments, [{ preventScroll: true }]);
+  assert.equal(f.window.document.activeElement, f.article);
+  assert.equal(f.by.mock.callCount(), 0);
+  assert.equal(f.to.mock.callCount(), 0);
+  assert.equal(f.key('j').defaultPrevented, true);
+  assert.equal(f.by.mock.callCount(), 1);
+  assert.equal(f.key('Escape').defaultPrevented, true);
+  assert.equal(f.calls.filter(call => call === 'close').length, 1);
+});
+
+test('resumes n and N from the last match while keeping the search panel hidden', async t => {
+  const f = await setup(t);
+  const { panel, input } = await openFind(f);
+  typeFind(f, input, 'one');
+  f.key('Enter', {}, input);
+  f.key('Escape', {}, input);
+  for (const [key, offset] of [['n', 8], ['n', 0], ['N', 8]]) {
+    assert.equal(f.key(key).defaultPrevented, true);
+    const [current] = f.registry.get('mjp-search-current');
+    assert.equal(current.startOffset, offset);
+    assert.equal(panel.hidden, true);
+    assert.equal(f.window.document.activeElement, f.article);
+  }
+  f.key('f', { metaKey: true });
+  assert.equal(panel.hidden, false);
+  assert.equal(input.value, 'one');
+  assert.equal(input.selectionStart, 0);
+  assert.equal(input.selectionEnd, 3);
+  assert.equal(panel.querySelector('[aria-live]').textContent, '3/3');
+});
+
+test('n and N do nothing without a search query and never initialize search', async t => {
+  const f = await setup(t);
+  f.key('n');
+  f.key('N');
+  assert.equal(f.calls.includes('search'), false);
+  const { panel, input } = await openFind(f);
+  f.key('Escape', {}, input);
+  f.key('n');
+  f.key('N');
+  assert.equal(panel.hidden, true);
+  assert.equal(f.registry.size, 0);
+  assert.equal(f.by.mock.callCount(), 0);
+});
+
+test('Cmd+W still closes the window while search is open', async t => {
+  const f = await setup(t);
+  const { input } = await openFind(f);
+  assert.equal(f.key('w', { metaKey: true }, input).defaultPrevented, true);
+  assert.equal(f.calls.filter(call => call === 'close').length, 1);
+});
+
+for (const [key, options] of [['Escape', {}], ['w', { metaKey: true }], ['W', { metaKey: true }]]) {
+  for (const state of key === 'Escape' ? ['uninitialized', 'closed'] : ['uninitialized', 'closed', 'open']) {
+    test(`closes the window with handled ${options.metaKey ? 'Cmd+' : ''}${key} when search is ${state}`, async t => {
+      const f = await setup(t);
+      let target = f.article;
+      if (state !== 'uninitialized') {
+        const { input } = await openFind(f);
+        if (state === 'closed') f.key('Escape', {}, input);
+        else target = input;
+      }
+      target.addEventListener('keydown', event => event.preventDefault(), { once: true });
+      assert.equal(f.key(key, options, target).defaultPrevented, true);
+      assert.equal(f.calls.filter(call => call === 'close').length, 1);
+    });
+  }
+}
+
+test('can open search from a copy button and returns focus to the article on Escape', async t => {
+  const f = await setup(t);
+  f.setSnapshot(snapshot('```js\none\n```', 1));
+  await f.changed();
+  const button = f.article.querySelector('button');
+  button.focus();
+  f.key('f', { metaKey: true }, button);
+  await new Promise(resolve => setImmediate(resolve));
+  const input = f.window.document.querySelector('input[type="search"]');
+  assert.ok(input);
+  f.key('Escape', {}, input);
+  assert.equal(f.window.document.activeElement, f.article);
+  assert.equal(f.key('j').defaultPrevented, true);
+});
+
+for (const count of [searchModule.MAX_MATCHES - 1, searchModule.MAX_MATCHES, searchModule.MAX_MATCHES + 1]) {
+  test(`shows the provisional limit accurately and cycles within stored matches at ${count} matches`, async t => {
+    const f = await setup(t);
+    const { input, count: display } = await openFind(f, 'a'.repeat(count));
+    typeFind(f, input, 'a');
+    const total = Math.min(count, searchModule.MAX_MATCHES);
+    const suffix = count > total ? '+' : '';
+    assert.equal(display.textContent, `1/${total}${suffix}`);
+    assert.equal(f.registry.get('mjp-search').size, total);
+    f.key('Enter', { shiftKey: true }, input);
+    assert.equal(display.textContent, `${total}/${total}${suffix}`);
+    f.key('Enter', {}, input);
+    assert.equal(display.textContent, `1/${total}${suffix}`);
+  });
+}
+
+test('refreshes shown results after replacement, retaining an in-range index without search scrolling', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f);
+  typeFind(f, input, 'one');
+  f.key('Enter', {}, input);
+  f.setMatchRect({ top: 900, bottom: 920, left: 100, right: 140, width: 40, height: 20 });
+  f.by.mock.resetCalls();
+  f.setSnapshot(snapshot('one two one', 2));
+  await f.changed();
+  assert.equal(count.textContent, '2/2');
+  assert.equal([...f.registry.get('mjp-search-current')][0].startContainer, f.article.querySelector('p').firstChild);
+  assert.equal(f.by.mock.callCount(), 0);
+  f.setSnapshot(snapshot('one', 3));
+  await f.changed();
+  assert.equal(count.textContent, '1/1');
+  assert.equal(f.by.mock.callCount(), 0);
+});
+
+test('rebuilds hidden results on navigation after replacement without reopening the panel', async t => {
+  const f = await setup(t);
+  const { panel, input } = await openFind(f);
+  typeFind(f, input, 'one');
+  f.key('Escape', {}, input);
+  f.setSnapshot(snapshot('one and one', 2));
+  await f.changed();
+  assert.equal(f.registry.size, 0);
+  f.key('n');
+  assert.equal(panel.hidden, true);
+  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
+  f.setSnapshot(snapshot('one plus one plus one', 3));
+  await f.changed();
+  assert.equal(panel.hidden, true);
+  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 9);
+});
+
+test('keeps search ranges on status-only updates and ignores older document revisions', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f);
+  typeFind(f, input, 'one');
+  f.key('Enter', {}, input);
+  const all = f.registry.get('mjp-search');
+  const current = f.registry.get('mjp-search-current');
+  f.setSnapshot(snapshot('one one one', 2, 'Cannot read file'));
+  await f.changed();
+  assert.equal(f.status.textContent, 'Cannot read file');
+  assert.equal(f.registry.get('mjp-search'), all);
+  assert.equal(f.registry.get('mjp-search-current'), current);
+  f.setSnapshot(snapshot('old', 1));
+  await f.changed();
+  assert.equal(f.registry.get('mjp-search'), all);
+  assert.equal(f.registry.get('mjp-search-current'), current);
+  assert.equal(count.textContent, '2/3');
+});
+
+test('searches rendered text across Markdown and plain-text replacements', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f, '**one**');
+  typeFind(f, input, '**');
+  assert.equal(count.textContent, '0/0');
+  f.setSnapshot(snapshot('**one**'.padEnd(128 * 1024 + 1, ' '), 2));
+  await f.changed();
+  assert.equal(count.textContent, '1/2');
+  f.setSnapshot(snapshot('**one**', 3));
+  await f.changed();
+  assert.equal(count.textContent, '0/0');
+});
+
+test('clears stale results synchronously on Enter after the query is emptied', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f);
+  typeFind(f, input, 'one');
+  input.value = '';
+  input.dispatchEvent(new f.window.Event('input', { bubbles: true }));
+  f.key('Enter', {}, input);
+  assert.equal(count.textContent, '0/0');
+  assert.equal(f.registry.size, 0);
+  assert.equal(f.frames.size, 0);
+});
+
+test('recovers the first result after a replacement changes zero matches to some matches', async t => {
+  const f = await setup(t);
+  const { input, count } = await openFind(f, 'other');
+  typeFind(f, input, 'one');
+  assert.equal(count.textContent, '0/0');
+  f.setSnapshot(snapshot('one one', 2));
+  await f.changed();
+  assert.equal(count.textContent, '1/2');
+});
+
+for (const [top, expectedScroll] of [[100, 0], [-20, -410], [900, 510]]) {
+  test(`scrolls only when the current match is outside the viewport at y=${top}`, async t => {
+    const f = await setup(t);
+    const { input } = await openFind(f);
+    Object.defineProperty(f.window, 'innerHeight', { value: 800 });
+    f.setMatchRect({ top, bottom: top + 20, left: 100, right: 140, width: 40, height: 20 });
+    typeFind(f, input, 'one');
+    assert.deepEqual(f.by.mock.calls.map(call => call.arguments), expectedScroll ? [[0, expectedScroll]] : []);
+    assert.equal(f.to.mock.callCount(), 0);
+    f.key('Enter', {}, input);
+    assert.equal(f.by.mock.callCount(), expectedScroll ? 2 : 0);
+    f.key('Escape', {}, input);
+    f.key('n');
+    assert.equal(f.by.mock.callCount(), expectedScroll ? 3 : 0);
+  });
+}
+
+for (const obstacle of ['status', 'search panel']) {
+  test(`reveals a match obscured by the ${obstacle}`, async t => {
+    const f = await setup(t);
+    const { input, panel } = await openFind(f);
+    Object.defineProperty(f.window, 'innerHeight', { value: 800 });
+    const overlay = obstacle === 'status' ? f.status : panel;
+    overlay.hidden = false;
+    overlay.getBoundingClientRect = () => ({ top: 0, bottom: 60, left: 0, right: 800, width: 800, height: 60 });
+    f.setMatchRect({ top: 20, bottom: 40, left: 100, right: 140, width: 40, height: 20 });
+    typeFind(f, input, 'one');
+    assert.deepEqual(f.by.mock.calls.map(call => call.arguments), [[0, -400]]);
+  });
+}
+
+test('does not scroll a visible match beside the search panel or beneath a hidden banner', async t => {
+  const f = await setup(t);
+  const { input, panel } = await openFind(f);
+  panel.getBoundingClientRect = () => ({ top: 12, bottom: 60, left: 600, right: 800, width: 200, height: 48 });
+  f.status.hidden = true;
+  f.status.getBoundingClientRect = () => ({ top: 0, bottom: 60, left: 0, right: 800, width: 800, height: 60 });
+  f.setMatchRect({ top: 20, bottom: 40, left: 100, right: 140, width: 40, height: 20 });
+  typeFind(f, input, 'one');
+  assert.equal(f.by.mock.callCount(), 0);
+});
+
+for (const [kind, text, selector] of [
+  ['code block', '```\none\n```', 'pre'],
+  ['table', '|one|\n|---|\n|value|', 'table'],
+]) {
+  for (const [contentLeft, initialScroll, expectedScroll] of [[180, 0, 100], [120, 100, 40]]) {
+    test(`reveals a horizontally clipped match inside a ${kind} from scrollLeft=${initialScroll}`, async t => {
+      const f = await setup(t);
+      const { input } = await openFind(f, text);
+      const scroller = f.article.querySelector(selector);
+      scroller.style.overflowX = 'auto';
+      scroller.getBoundingClientRect = () => ({ top: 80, bottom: 140, left: 50, right: 150, width: 100, height: 60 });
+      Object.defineProperty(scroller, 'clientWidth', { value: 100 });
+      scroller.scrollLeft = initialScroll;
+      f.setMatchRect(() => {
+        const left = contentLeft - scroller.scrollLeft;
+        return { top: 100, bottom: 120, left, right: left + 40, width: 40, height: 20 };
+      });
+      typeFind(f, input, 'one');
+      assert.equal(scroller.scrollLeft, expectedScroll);
+      assert.equal(f.by.mock.callCount(), 0);
+      f.key('Enter', {}, input);
+      assert.equal(scroller.scrollLeft, expectedScroll);
+    });
+  }
+}
 
 for (const outcome of ['success', 'failure']) {
   test(`keeps the latest display when an older read finishes with ${outcome}`, async t => {
@@ -122,7 +518,7 @@ test('scrolls to the end with G and to the beginning with two timely g presses',
   assert.deepEqual(f.to.mock.calls.map(call => call.arguments), [[0, 2500], [0, 0]]);
 });
 
-for (const interruption of ['timeout', 'repeat', 'other key', 'modifier', 'input']) {
+for (const interruption of ['timeout', 'repeat', 'other key', 'modifier', 'input', 'handled key']) {
   test(`does not complete gg after ${interruption}`, async t => {
     const f = await setup(t);
     let now = 100;
@@ -132,6 +528,10 @@ for (const interruption of ['timeout', 'repeat', 'other key', 'modifier', 'input
     if (interruption === 'repeat') f.key('g', { repeat: true });
     if (interruption === 'other key') f.key('x');
     if (interruption === 'modifier') f.key('g', { metaKey: true });
+    if (interruption === 'handled key') {
+      f.article.addEventListener('keydown', event => event.preventDefault(), { once: true });
+      f.key('/');
+    }
     if (interruption === 'input') {
       const input = f.window.document.createElement('input');
       f.article.append(input);

@@ -26,6 +26,35 @@ body { margin: 0; }
   font-size: 13px;
 }
 #status[hidden] { display: none; }
+.search-panel {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px #0003;
+  font-size: 13px;
+}
+.search-panel[hidden] { display: none; }
+.search-panel input {
+  min-width: 0;
+  width: 220px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: inherit;
+  color: inherit;
+  font: inherit;
+}
+.search-panel input:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.search-panel [aria-live] { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .markdown-body {
   max-width: 880px;
   min-height: 100vh;
