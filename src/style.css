@@ -55,6 +55,21 @@ body { margin: 0; }
 }
 .search-panel input:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
 .search-panel [aria-live] { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.search-count {
+  position: absolute;
+  z-index: 0;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.search-count[hidden] { display: none; }
 .markdown-body {
   max-width: 880px;
   min-height: 100vh;

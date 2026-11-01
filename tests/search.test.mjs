@@ -58,6 +58,47 @@ function rangesFor(segments, query, limit = search.MAX_MATCHES) {
   return search.createMatchRanges(segments, starts, folded.length);
 }
 
+const rect = (top, right, left = 0) => ({ top, bottom: top + 20, left, right, width: right - left, height: 20 });
+
+for (const [html, query, tail, rectangles, expected] of [
+  ['<pre><code>hit end\nthis line is much longer</code></pre>', 'hit', ' end', [rect(100, 160)], 160],
+  ['<pre><code>hit<span> across</span><em> nodes\nlonger next line</em></code></pre>', 'hit', ' across nodes', [rect(100, 180), rect(100, 220)], 220],
+  ['<pre><code>first\nhit end</code></pre>', 'hit', ' end', [rect(120, 170)], 170],
+  ['<p>hit <a href="#">link</a> <em>emphasis</em> <code>code</code> tail</p><p>outside</p>', 'hit', ' link emphasis code tail', [rect(100, 170), rect(100, 210), rect(120, 450)], 210],
+  ['<p>first line hit end</p>', 'line hit', ' end', [rect(120, 180)], 180],
+  ['<p>hit</p>', 'hit', '', [], 140],
+]) {
+  test(`finds the text line end for ${html} without including other lines or segments`, t => {
+    const { window, article } = articleFixture(t, html);
+    const segments = search.collectSegments(article);
+    const { starts: [match] } = search.findMatches(segments.map(segment => segment.text), query, 10);
+    const tails = [];
+    window.Range.prototype.getClientRects = function () { tails.push(this.toString()); return rectangles; };
+    const line = rect(html.includes('first') ? 120 : 100, 140);
+    assert.equal(segments[match.segment].lineEnd(match.offset + query.length, line), expected);
+    assert.deepEqual(tails, [tail]);
+  });
+}
+
+test('calculates a line end in 10 MiB of plain text using only the rest of the matching line', t => {
+  const { window, article } = articleFixture(t, '<pre></pre>');
+  const line = 'hit ' + 'x'.repeat(75) + '\n';
+  const text = line.repeat(131072);
+  assert.equal(Buffer.byteLength(text), 10 * 1024 * 1024);
+  article.querySelector('pre').textContent = text;
+  const [segment] = search.collectSegments(article);
+  const tails = [];
+  window.Range.prototype.getClientRects = function () {
+    tails.push([this.startOffset, this.endOffset, this.startContainer, this.endContainer]);
+    return [rect(100, 600)];
+  };
+  for (const start of [0, text.length / 2, text.length - line.length]) {
+    assert.equal(segment.lineEnd(start + 3, rect(100, 140)), 600);
+    assert.deepEqual(tails.at(-1), [start + 3, start + 79, article.querySelector('pre').firstChild, article.querySelector('pre').firstChild]);
+  }
+  assert.equal(tails.length, 3);
+});
+
 for (const [query, result, open, shown] of [
   ['one', 'committed', false, true],
   ['', 'closed', false, false],
@@ -66,6 +107,7 @@ for (const [query, result, open, shown] of [
   test(`commit returns ${result} for ${JSON.stringify(query)} and exposes its resulting panel state`, t => {
     const { article, window } = articleFixture(t, '<p>one one one</p>');
     window.Range.prototype.getBoundingClientRect = () => ({ top: 100, bottom: 120, left: 100, right: 140, width: 40, height: 20 });
+    window.Range.prototype.getClientRects = function () { return [this.getBoundingClientRect()]; };
     window.scrollBy = () => {};
     let frame;
     window.requestAnimationFrame = callback => { frame = callback; return 1; };
@@ -79,10 +121,14 @@ for (const [query, result, open, shown] of [
     assert.equal(controller.commit(), result);
     assert.equal(controller.isOpen, open);
     assert.equal(controller.isShown, shown);
-    assert.equal(frame, undefined);
+    if (result === 'committed') {
+      assert.equal(typeof frame, 'function');
+      frame();
+      assert.equal(article.parentElement.querySelector('.search-count').textContent, '[1/3]');
+    } else assert.equal(frame, undefined);
     assert.equal(window.document.activeElement, open ? controller.input : article);
     if (result === 'committed') assert.equal(highlights.registry.get('mjp-search-current')[0].startOffset, 0);
-    if (result === 'empty') assert.equal(article.previousElementSibling.querySelector('[aria-live]').textContent, '0/0');
+    if (result === 'empty') assert.equal(article.parentElement.querySelector('[role="search"] [aria-live]').textContent, '0/0');
   });
 }
 

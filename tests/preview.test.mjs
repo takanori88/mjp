@@ -25,6 +25,15 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
   window.Range.prototype.getBoundingClientRect = function () {
     return typeof matchRect === 'function' ? matchRect(this) : matchRect;
   };
+  window.Range.prototype.getClientRects = function () { return [this.getBoundingClientRect()]; };
+  const observers = [];
+  window.ResizeObserver = class {
+    targets = new Set();
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.targets.add(target); }
+    disconnect() { this.targets.clear(); }
+    notify(target) { this.callback([{ target }], this); }
+  };
   const pending = [];
   const calls = [];
   let changed;
@@ -48,7 +57,7 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
     target.dispatchEvent(event);
     return event;
   };
-  return { window, article, status, calls, pending, boot, by, to, key, registry, frames,
+  return { window, article, status, calls, pending, boot, by, to, key, registry, frames, observers,
     frame: () => {
       const callbacks = [...frames.values()];
       frames.clear();
@@ -101,6 +110,221 @@ function typeFind(f, input, value) {
 }
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+const badgeRect = (top, right, left = 100) => ({ top, bottom: top + 20, left, right, width: right - left, height: 20 });
+
+async function badgeFixture(t, text = 'one one one', fallback = false) {
+  const f = await setup(t);
+  if (fallback) f.window.CSS.highlights = undefined;
+  const controls = await openFind(f, text);
+  const badge = f.window.document.querySelector('.search-count');
+  assert.ok(badge);
+  badge.getBoundingClientRect = () => badgeRect(0, 56, 0);
+  f.article.getBoundingClientRect = () => badgeRect(0, 650, 50);
+  return { ...f, ...controls, badge };
+}
+
+for (const fallback of [false, true]) {
+  test(`shows a sibling count badge after confirmation and navigation using ${fallback ? 'Selection' : 'CSS highlights'}`, async t => {
+    const f = await badgeFixture(t, 'one one one', fallback);
+    const children = [...f.article.querySelectorAll('*')];
+    const html = f.article.innerHTML;
+    assert.equal(f.badge.hidden, true);
+    typeFind(f, f.input, 'one');
+    assert.equal(f.badge.hidden, true);
+    f.key('Enter', {}, f.input);
+    f.frame();
+    assert.equal(f.badge.hidden, false);
+    assert.equal(f.badge.textContent, '[1/3]');
+    assert.equal(f.badge.getAttribute('aria-live'), 'polite');
+    assert.equal(f.badge.parentElement, f.article.parentElement);
+    assert.equal(f.badge.style.left, '148px');
+    assert.equal(f.badge.style.top, '100px');
+    f.key('n');
+    f.frame();
+    assert.equal(f.badge.textContent, '[2/3]');
+    f.key('N');
+    f.frame();
+    assert.equal(f.badge.textContent, '[1/3]');
+    assert.equal(f.article.innerHTML, html);
+    assert.deepEqual([...f.article.querySelectorAll('*')], children);
+    f.key('Escape');
+    assert.equal(f.badge.hidden, true);
+  });
+}
+
+for (const total of [999, 1000, 1001]) {
+  test(`shows the confirmed count cap in the badge for ${total} matches`, async t => {
+    const f = await badgeFixture(t, 'a'.repeat(total));
+    typeFind(f, f.input, 'a');
+    f.key('Enter', {}, f.input);
+    f.key('n');
+    f.key('n');
+    f.frame();
+    assert.equal(f.badge.textContent, `[3/${Math.min(total, 1000)}${total > 1000 ? '+' : ''}]`);
+  });
+}
+
+test('places the badge at the last matching line and the same-line text end in document coordinates', async t => {
+  const f = await badgeFixture(t, 'one **two** [tail](https://example.com)\n\nother');
+  f.window.scrollY = 200;
+  f.window.scrollX = 25;
+  f.window.Range.prototype.getClientRects = function () {
+    if (this.toString() === 'one two') return [badgeRect(80, 200), badgeRect(100, 180)];
+    assert.equal(this.toString(), ' tail');
+    return [badgeRect(100, 260), badgeRect(120, 600)];
+  };
+  typeFind(f, f.input, 'one two');
+  f.key('Enter', {}, f.input);
+  f.frame();
+  assert.equal(f.badge.style.left, '293px');
+  assert.equal(f.badge.style.top, '300px');
+});
+
+test('overlays the badge inside the article right edge when the line has no remaining space', async t => {
+  const f = await badgeFixture(t);
+  f.window.Range.prototype.getClientRects = () => [badgeRect(100, 640)];
+  typeFind(f, f.input, 'one');
+  f.key('Enter', {}, f.input);
+  f.frame();
+  assert.equal(f.badge.style.left, '594px');
+});
+
+for (const [text, selector] of [['```\none tail\n```', 'pre'], ['|one tail|\n|---|\n|value|', 'table']]) {
+  test(`keeps the badge inside the visible ${selector} scrolling area`, async t => {
+    const f = await badgeFixture(t, text);
+    const scroller = f.article.querySelector(selector);
+    scroller.style.overflowX = 'auto';
+    scroller.getBoundingClientRect = () => badgeRect(100, 252, 50);
+    Object.defineProperty(scroller, 'clientWidth', { value: 200 });
+    Object.defineProperty(scroller, 'clientLeft', { value: 2 });
+    f.window.Range.prototype.getClientRects = () => [badgeRect(100, 600)];
+    typeFind(f, f.input, 'one');
+    f.key('Enter', {}, f.input);
+    f.frame();
+    assert.equal(f.badge.style.left, '196px');
+  });
+}
+
+for (const event of ['resize', 'article size', 'status size', 'scroll', 'load', 'error']) {
+  test(`repositions the badge after ${event} without searching or changing document sizes`, async t => {
+    const f = await badgeFixture(t, 'one <img>');
+    const image = f.window.document.createElement('img');
+    f.article.append(image);
+    typeFind(f, f.input, 'one');
+    f.key('Enter', {}, f.input);
+    f.frame();
+    const current = f.registry.get('mjp-search-current');
+    const articleBounds = f.article.getBoundingClientRect();
+    const statusBounds = f.status.getBoundingClientRect();
+    f.setMatchRect(badgeRect(240, 300));
+    if (event === 'resize') f.window.dispatchEvent(new f.window.Event('resize'));
+    else if (event.endsWith('size')) {
+      const target = event === 'article size' ? f.article : f.status;
+      assert.ok(f.observers[0].targets.has(target));
+      f.observers[0].notify(target);
+    } else image.dispatchEvent(new f.window.Event(event));
+    assert.equal(f.frames.size, 1);
+    f.frame();
+    assert.equal(f.badge.style.left, '308px');
+    assert.equal(f.badge.style.top, '240px');
+    assert.equal(f.registry.get('mjp-search-current'), current);
+    assert.deepEqual(f.article.getBoundingClientRect(), articleBounds);
+    assert.deepEqual(f.status.getBoundingClientRect(), statusBounds);
+  });
+}
+
+test('coalesces badge placement separately from search and uses the latest match geometry', async t => {
+  const f = await badgeFixture(t);
+  typeFind(f, f.input, 'one');
+  f.key('Enter', {}, f.input);
+  f.key('n');
+  f.key('n');
+  f.window.dispatchEvent(new f.window.Event('resize'));
+  f.article.dispatchEvent(new f.window.Event('scroll'));
+  f.observers[0].notify(f.article);
+  f.setMatchRect(badgeRect(260, 400));
+  const layout = t.mock.method(f.window.Range.prototype, 'getClientRects');
+  assert.equal(f.frames.size, 1);
+  f.frame();
+  assert.equal(layout.mock.callCount(), 2);
+  assert.equal(f.badge.style.left, '408px');
+  assert.equal(f.badge.style.top, '260px');
+  assert.equal(f.badge.textContent, '[3/3]');
+});
+
+for (const action of ['open', 'clear', 'pagehide']) {
+  test(`suppresses queued badge placement after ${action}`, async t => {
+    const f = await badgeFixture(t);
+    typeFind(f, f.input, 'one');
+    f.key('Enter', {}, f.input);
+    const queued = [...f.frames.values()];
+    if (action === 'open') f.key('f', { metaKey: true });
+    else if (action === 'clear') f.key('Escape');
+    else f.window.dispatchEvent(new f.window.Event('pagehide'));
+    queued.forEach(callback => callback(0));
+    f.frame();
+    assert.equal(f.badge.hidden, true);
+    assert.equal(f.frames.size, 0);
+  });
+}
+
+test('restores the badge on cancel and refreshes it against replacement content until results become empty', async t => {
+  const f = await badgeFixture(t, 'old old old new');
+  typeFind(f, f.input, 'old');
+  f.key('Enter', {}, f.input);
+  f.key('n');
+  f.frame();
+  assert.equal(f.badge.textContent, '[2/3]');
+  f.key('f', { metaKey: true });
+  typeFind(f, f.input, 'new');
+  assert.equal(f.badge.hidden, true);
+  f.key('Escape', {}, f.input);
+  f.frame();
+  assert.equal(f.badge.hidden, false);
+  assert.equal(f.badge.textContent, '[2/3]');
+  f.setSnapshot(snapshot('old old', 2));
+  await f.changed();
+  f.setMatchRect(badgeRect(220, 340));
+  f.frame();
+  assert.equal(f.badge.textContent, '[2/2]');
+  assert.equal(f.badge.style.top, '220px');
+  f.setSnapshot(snapshot('new', 3));
+  await f.changed();
+  f.frame();
+  assert.equal(f.badge.hidden, true);
+});
+
+test('keeps the badge hidden for empty confirmation and zero-result searches', async t => {
+  const f = await badgeFixture(t);
+  typeFind(f, f.input, 'missing');
+  f.key('Enter', {}, f.input);
+  f.frame();
+  assert.equal(f.badge.hidden, true);
+  typeFind(f, f.input, '');
+  f.key('Enter', {}, f.input);
+  f.window.dispatchEvent(new f.window.Event('resize'));
+  f.frame();
+  assert.equal(f.badge.hidden, true);
+});
+
+test('removes badge observers and all placement listeners on page exit', async t => {
+  const f = await badgeFixture(t);
+  typeFind(f, f.input, 'one');
+  f.key('Enter', {}, f.input);
+  f.frame();
+  const removeArticle = t.mock.method(f.article, 'removeEventListener');
+  const removeWindow = t.mock.method(f.window, 'removeEventListener');
+  f.window.dispatchEvent(new f.window.Event('pagehide'));
+  assert.equal(f.window.document.querySelector('.search-count'), null);
+  assert.equal(f.observers[0].targets.size, 0);
+  assert.deepEqual(removeArticle.mock.calls.map(call => [call.arguments[0], call.arguments[2]]), [['scroll', true], ['load', true], ['error', true]]);
+  assert.ok(removeWindow.mock.calls.some(call => call.arguments[0] === 'resize'));
+  f.window.dispatchEvent(new f.window.Event('resize'));
+  for (const event of ['scroll', 'load', 'error']) f.article.dispatchEvent(new f.window.Event(event));
+  f.observers[0].notify(f.article);
+  assert.equal(f.frames.size, 0);
+});
 
 function matchTops(f, tops) {
   f.setMatchRect(range => {
@@ -265,7 +489,7 @@ for (const shown of [false, true]) {
       assert.deepEqual(f.to.mock.calls.map(call => call.arguments), [[0, 180]]);
       assert.equal(f.window.document.activeElement, f.article);
       assert.equal(f.calls.includes('close'), false);
-      assert.equal(f.frames.size, 0);
+      assert.equal(f.frames.size, shown ? 1 : 0);
       if (shown) {
         assert.deepEqual([...f.registry.get('mjp-search')].map(range => range.toString()), ['old', 'old', 'old']);
         assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 4);
@@ -273,6 +497,8 @@ for (const shown of [false, true]) {
       const current = f.registry.get('mjp-search-current');
       f.frame();
       assert.equal(f.registry.get('mjp-search-current'), current);
+      assert.equal(f.frames.size, 0);
+      if (shown) assert.equal(f.window.document.querySelector('.search-count').textContent, '[2/3]');
       assert.equal(f.by.mock.callCount(), 0);
       if (!shown) {
         f.key('n');
@@ -602,12 +828,13 @@ for (const shiftKey of [false, true]) {
     assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 8);
     assert.equal(f.registry.get('mjp-search').size, 3);
     assert.equal(f.window.document.activeElement, f.article);
-    assert.equal(f.frames.size, 0);
+    assert.equal(f.frames.size, 1);
     assert.equal(f.by.mock.callCount(), 1);
     assert.equal(set.mock.callCount(), 2);
     f.frame();
     assert.equal(f.by.mock.callCount(), 1);
     assert.equal(set.mock.callCount(), 2);
+    assert.equal(f.window.document.querySelector('.search-count').textContent, '[1/3]');
   });
 }
 

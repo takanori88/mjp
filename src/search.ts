@@ -53,6 +53,7 @@ type TextRun = {
 export type SearchSegment = {
   text: string;
   range: (offset: number, length: number) => Range;
+  lineEnd: (offset: number, line: DOMRect) => number;
 };
 
 const blockTags = new Set([
@@ -81,12 +82,14 @@ export function collectSegments(article: HTMLElement): SearchSegment[] {
   let parts: string[] = [];
   let runs: TextRun[] = [];
   let length = 0;
+  let preformatted = false;
   let space: { start: Point; end: Point } | undefined;
 
   function flush(): void {
     if (length) {
       const text = fold(parts.join(""));
       const positions = runs;
+      const pre = preformatted;
       segments.push({
         text,
         range(offset, size) {
@@ -100,16 +103,35 @@ export function collectSegments(article: HTMLElement): SearchSegment[] {
           range.setEnd(end.node, end.offset);
           return range;
         },
+        lineEnd(offset, line) {
+          if (!Number.isInteger(offset) || offset < 1 || offset > text.length) throw new RangeError("Invalid line offset");
+          const newline = pre ? text.indexOf("\n", offset) : -1;
+          const endOffset = newline === -1 ? text.length : newline;
+          const start = pointAt(positions, offset - 1, true);
+          const end = pointAt(positions, endOffset - 1, true);
+          const tail = document.createRange();
+          tail.setStart(start.node, start.offset);
+          tail.setEnd(end.node, end.offset);
+          const rects = Array.from(tail.getClientRects());
+          if (pre) return rects.at(-1)?.right ?? line.right;
+          let right = line.right;
+          for (const rect of rects) {
+            if (rect.top < line.bottom && rect.bottom > line.top) right = Math.max(right, rect.right);
+          }
+          return right;
+        },
       });
     }
     parts = [];
     runs = [];
     length = 0;
+    preformatted = false;
     space = undefined;
   }
 
-  function append(node: Text, offset: number, text: string): void {
+  function append(node: Text, offset: number, text: string, pre = false): void {
     if (!text) return;
+    preformatted = pre;
     if (space && length) {
       parts.push(" ");
       runs.push({ offset: length++, length: 1, ...space, collapsed: true });
@@ -126,7 +148,7 @@ export function collectSegments(article: HTMLElement): SearchSegment[] {
   function visit(node: Node, pre: boolean): void {
     if (node.nodeType === 3) {
       const text = node as Text;
-      if (pre) append(text, 0, text.data);
+      if (pre) append(text, 0, text.data, true);
       else {
         for (const part of text.data.matchAll(/[ \t\n\r]+|[^ \t\n\r]+/g)) {
           const offset = part.index;
@@ -274,7 +296,12 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   count.setAttribute("aria-live", "polite");
   count.setAttribute("aria-atomic", "true");
   panel.append(input, count);
-  article.before(panel);
+  const badge = document.createElement("span");
+  badge.className = "search-count";
+  badge.setAttribute("aria-live", "polite");
+  badge.setAttribute("aria-atomic", "true");
+  badge.hidden = true;
+  article.before(panel, badge);
   article.tabIndex = -1;
 
   let shown = false;
@@ -285,8 +312,10 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   let index = -1;
   let segments: SearchSegment[] = [];
   let ranges: Range[] = [];
+  let matches: Match[] = [];
   let truncated = false;
   let frame: number | undefined;
+  let positionFrame: number | undefined;
   let disposed = false;
   let selected: SelectionState | undefined;
   let origin: SearchOrigin | undefined;
@@ -305,6 +334,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
     if (matchesStale) {
       const folded = fold(query);
       const result = findMatches(segments.map(segment => segment.text), folded, MAX_MATCHES);
+      matches = result.starts;
       ranges = createMatchRanges(segments, result.starts, folded.length);
       truncated = result.truncated;
       index = queryChanged ? indexFromOrigin() : retain(index, ranges.length);
@@ -351,7 +381,59 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
     if (!panel.hidden) count.textContent = `${index + 1}/${ranges.length}${truncated ? "+" : ""}`;
     if (options.highlights) updateHighlights(options.highlights, shown ? ranges : [], index);
     else if (!shown) clearSelection();
+    schedulePosition();
   }
+
+  function canPosition(): boolean {
+    return !disposed && shown && panel.hidden && Boolean(ranges[index]);
+  }
+
+  function positionBadge(): void {
+    if (!canPosition()) return;
+    const range = ranges[index];
+    const line = Array.from(range.getClientRects()).at(-1);
+    if (!line) {
+      badge.hidden = true;
+      return;
+    }
+    const match = matches[index];
+    const end = segments[match.segment].lineEnd(match.offset + query.length, line);
+    const articleBounds = article.getBoundingClientRect();
+    let right = articleBounds.right;
+    for (let ancestor = range.startContainer.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const overflow = view.getComputedStyle(ancestor).overflowX;
+      if ((overflow === "auto" || overflow === "scroll") && ancestor.clientWidth > 0) {
+        right = Math.min(right, ancestor.getBoundingClientRect().left + ancestor.clientLeft + ancestor.clientWidth);
+      }
+      if (ancestor === article) break;
+    }
+    badge.textContent = `[${index + 1}/${ranges.length}${truncated ? "+" : ""}]`;
+    badge.hidden = false;
+    const width = badge.getBoundingClientRect().width;
+    badge.style.left = `${Math.max(articleBounds.left, Math.min(end + 8, right - width)) + view.scrollX}px`;
+    badge.style.top = `${line.top + view.scrollY}px`;
+  }
+
+  function schedulePosition(): void {
+    if (!canPosition()) {
+      if (positionFrame !== undefined) view.cancelAnimationFrame(positionFrame);
+      positionFrame = undefined;
+      badge.hidden = true;
+      return;
+    }
+    if (positionFrame === undefined) {
+      positionFrame = view.requestAnimationFrame(() => {
+        positionFrame = undefined;
+        positionBadge();
+      });
+    }
+  }
+
+  const observer = typeof view.ResizeObserver === "function" ? new view.ResizeObserver(schedulePosition) : undefined;
+  observer?.observe(article);
+  if (options.status) observer?.observe(options.status);
+  view.addEventListener("resize", schedulePosition);
+  for (const event of ["scroll", "load", "error"]) article.addEventListener(event, schedulePosition, true);
 
   function clearSelection(): void {
     const previous = selected;
@@ -456,6 +538,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       panel.hidden = true;
       origin = undefined;
       focusKeepingSelection(article);
+      schedulePosition();
     },
     move(direction: 1 | -1): boolean {
       if (disposed || (!query && panel.hidden)) return false;
@@ -474,6 +557,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       clearSelection();
       segments = [];
       ranges = [];
+      matches = [];
       segmentsStale = true;
       matchesStale = true;
       if (shown) {
@@ -490,9 +574,14 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       panel.hidden = true;
       paint();
       input.removeEventListener("input", onInput);
+      observer?.disconnect();
+      view.removeEventListener("resize", schedulePosition);
+      for (const event of ["scroll", "load", "error"]) article.removeEventListener(event, schedulePosition, true);
       panel.remove();
+      badge.remove();
       segments = [];
       ranges = [];
+      matches = [];
     },
   };
 }
