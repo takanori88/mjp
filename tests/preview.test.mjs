@@ -94,6 +94,218 @@ function typeFind(f, input, value) {
   f.frame();
 }
 
+function selectArticleText(f, start, end) {
+  const node = f.article.querySelector('p').firstChild;
+  const range = f.window.document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+  const selection = f.window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return selection.getRangeAt(0);
+}
+
+for (const missing of ['CSS', 'highlights', 'Highlight']) {
+  test(`fallback keeps selection while typing and selects only navigated matches without ${missing}`, async t => {
+    const f = await setup(t);
+    if (missing === 'highlights') f.window.CSS.highlights = undefined;
+    else f.window[missing] = undefined;
+    const { panel, input, count } = await openFind(f, 'keep one one one');
+    const selection = f.window.getSelection();
+    const userRange = selectArticleText(f, 0, 4);
+    const addRange = t.mock.method(selection, 'addRange');
+    const removeRanges = t.mock.method(selection, 'removeAllRanges');
+    typeFind(f, input, 'one');
+    assert.equal(count.textContent, '1/3');
+    assert.equal(selection.getRangeAt(0), userRange);
+    assert.equal(selection.toString(), 'keep');
+    assert.equal(addRange.mock.callCount(), 0);
+    assert.equal(removeRanges.mock.callCount(), 0);
+    assert.equal(f.window.document.activeElement, input);
+    assert.equal(f.registry.size, 0);
+
+    for (const [options, expectedOffset, expectedCount] of [[{}, 9, '2/3'], [{ shiftKey: true }, 5, '1/3']]) {
+      assert.equal(f.key('Enter', options, input).defaultPrevented, true);
+      assert.equal(count.textContent, expectedCount);
+      assert.equal(selection.toString(), 'one');
+      assert.equal(selection.getRangeAt(0).startOffset, expectedOffset);
+      assert.equal(f.window.document.activeElement, input);
+    }
+    assert.equal(f.key('c', { metaKey: true }, input).defaultPrevented, false);
+    f.key('Escape', {}, input);
+    assert.equal(selection.rangeCount, 0);
+    for (const [key, expectedOffset] of [['n', 9], ['N', 5]]) {
+      assert.equal(f.key(key).defaultPrevented, true);
+      assert.equal(selection.toString(), 'one');
+      assert.equal(selection.getRangeAt(0).startOffset, expectedOffset);
+      assert.equal(panel.hidden, true);
+      assert.equal(f.window.document.activeElement, f.article);
+    }
+    assert.equal(f.key('c', { metaKey: true }).defaultPrevented, false);
+    f.key('f', { metaKey: true });
+    f.key('Escape', {}, input);
+    assert.equal(selection.rangeCount, 0);
+    assert.equal(f.registry.size, 0);
+  });
+}
+
+test('fallback preserves an existing user selection when search closes without navigation', async t => {
+  const f = await setup(t);
+  f.window.CSS.highlights = undefined;
+  const { input } = await openFind(f, 'keep one one one');
+  const range = selectArticleText(f, 0, 4);
+  typeFind(f, input, 'one');
+  f.key('Escape', {}, input);
+  assert.equal(f.window.getSelection().getRangeAt(0), range);
+  assert.equal(f.window.getSelection().toString(), 'keep');
+});
+
+for (const change of ['different range', 'same endpoints in a new range', 'changed endpoints in the same range']) {
+  test(`fallback preserves the user's ${change} when search closes`, async t => {
+    const f = await setup(t);
+    f.window.CSS.highlights = undefined;
+    const { input } = await openFind(f, 'keep one one one');
+    typeFind(f, input, 'one');
+    f.key('Enter', {}, input);
+    const selection = f.window.getSelection();
+    assert.equal(selection.toString(), 'one');
+    const original = selection.getRangeAt(0);
+    let userRange;
+    if (change === 'changed endpoints in the same range') {
+      original.setStart(original.startContainer, 0);
+      original.setEnd(original.endContainer, 4);
+      userRange = original;
+    } else {
+      userRange = selectArticleText(f, change === 'different range' ? 0 : 9, change === 'different range' ? 4 : 12);
+      assert.notEqual(userRange, original);
+    }
+    const text = selection.toString();
+    f.key('Escape', {}, input);
+    assert.equal(selection.getRangeAt(0), userRange);
+    assert.equal(selection.toString(), text);
+  });
+}
+
+test('fallback restores the search input focus if selecting a match moves focus to the document', async t => {
+  const f = await setup(t);
+  f.window.CSS.highlights = undefined;
+  const { input, count } = await openFind(f);
+  typeFind(f, input, 'one');
+  input.setSelectionRange(1, 1);
+  const selection = f.window.getSelection();
+  const addRange = selection.addRange;
+  t.mock.method(selection, 'addRange', range => {
+    addRange.call(selection, range);
+    f.article.focus({ preventScroll: true });
+  });
+  const focus = t.mock.method(input, 'focus');
+  f.key('Enter', {}, input);
+  assert.equal(count.textContent, '2/3');
+  assert.equal(selection.toString(), 'one');
+  assert.equal(f.window.document.activeElement, input);
+  assert.deepEqual(focus.mock.calls[0].arguments, [{ preventScroll: true }]);
+  assert.equal(input.selectionStart, 1);
+  assert.equal(input.selectionEnd, 1);
+  assert.equal(f.by.mock.callCount(), 0);
+});
+
+test('fallback keeps cached matches intact when the user adjusts the selected range in place', async t => {
+  const f = await setup(t);
+  f.window.CSS.highlights = undefined;
+  const { input } = await openFind(f, 'keep one one one');
+  typeFind(f, input, 'one');
+  f.key('Enter', {}, input);
+  const selection = f.window.getSelection();
+  const range = selection.getRangeAt(0);
+  range.setStart(range.startContainer, 0);
+  range.setEnd(range.endContainer, 4);
+  f.key('Escape', {}, input);
+  assert.equal(selection.toString(), 'keep');
+  f.key('n');
+  assert.equal(selection.getRangeAt(0).startOffset, 13);
+  f.key('N');
+  assert.equal(selection.toString(), 'one');
+  assert.equal(selection.getRangeAt(0).startOffset, 9);
+});
+
+test('fallback leaves the previous selection while typing and clears its own selection on a zero-result move', async t => {
+  const f = await setup(t);
+  f.window.CSS.highlights = undefined;
+  const { input, count } = await openFind(f);
+  typeFind(f, input, 'one');
+  f.key('Enter', {}, input);
+  const selection = f.window.getSelection();
+  assert.equal(selection.toString(), 'one');
+  const previous = selection.getRangeAt(0);
+  typeFind(f, input, 'missing');
+  assert.equal(count.textContent, '0/0');
+  assert.equal(selection.getRangeAt(0), previous);
+  f.key('Enter', {}, input);
+  assert.equal(selection.rangeCount, 0);
+});
+
+test('fallback leaves a user selection intact on a zero-result move', async t => {
+  const f = await setup(t);
+  f.window.CSS.highlights = undefined;
+  const { input } = await openFind(f, 'keep one one one');
+  typeFind(f, input, 'one');
+  f.key('Enter', {}, input);
+  assert.equal(f.window.getSelection().toString(), 'one');
+  typeFind(f, input, 'missing');
+  const userRange = selectArticleText(f, 0, 4);
+  f.key('Enter', {}, input);
+  assert.equal(f.window.getSelection().getRangeAt(0), userRange);
+  assert.equal(f.window.getSelection().toString(), 'keep');
+});
+
+test('fallback preserves backward user selection through opening and closing search', async t => {
+  const f = await setup(t);
+  f.window.CSS.highlights = undefined;
+  const { input } = await openFind(f, 'keep one one one');
+  const node = f.article.querySelector('p').firstChild;
+  const selection = f.window.getSelection();
+  selection.setBaseAndExtent(node, 4, node, 0);
+  f.key('Escape', {}, input);
+  f.key('f', { metaKey: true });
+  assert.equal(selection.toString(), 'keep');
+  assert.equal(selection.anchorNode, node);
+  assert.equal(selection.anchorOffset, 4);
+  assert.equal(selection.focusNode, node);
+  assert.equal(selection.focusOffset, 0);
+  assert.equal(f.window.document.activeElement, input);
+});
+
+for (const userSelected of [false, true]) {
+  test(`fallback ${userSelected ? 'preserves user selection' : 'removes its own selection'} on page exit`, async t => {
+    const f = await setup(t);
+    f.window.CSS.highlights = undefined;
+    const { input } = await openFind(f, 'keep one one one');
+    typeFind(f, input, 'one');
+    f.key('Enter', {}, input);
+    const selection = f.window.getSelection();
+    assert.equal(selection.toString(), 'one');
+    const userRange = userSelected ? selectArticleText(f, 0, 4) : null;
+    f.window.dispatchEvent(new f.window.Event('pagehide'));
+    if (userSelected) {
+      assert.equal(selection.getRangeAt(0), userRange);
+      assert.equal(selection.toString(), 'keep');
+    } else assert.equal(selection.rangeCount, 0);
+    assert.equal(f.window.document.querySelector('[role="search"]'), null);
+  });
+}
+
+test('CSS highlights leave user selection untouched through navigation and closure', async t => {
+  const f = await setup(t);
+  const { input } = await openFind(f, 'keep one one one');
+  const range = selectArticleText(f, 0, 4);
+  typeFind(f, input, 'one');
+  f.key('Enter', {}, input);
+  assert.equal([...f.registry.get('mjp-search-current')][0].startOffset, 9);
+  f.key('Escape', {}, input);
+  assert.equal(f.window.getSelection().getRangeAt(0), range);
+  assert.equal(f.window.getSelection().toString(), 'keep');
+});
+
 test('starts the preview without initializing search', async t => {
   const f = await setup(t);
   assert.equal(f.calls.includes('search'), false);

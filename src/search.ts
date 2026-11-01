@@ -212,6 +212,39 @@ function revealMatch(range: Range, article: HTMLElement, overlays: HTMLElement[]
   }
 }
 
+type SelectionState = Pick<Selection, "anchorNode" | "anchorOffset" | "focusNode" | "focusOffset"> & {
+  ranges: Range[];
+};
+
+function selectionState(selection: Selection): SelectionState {
+  return {
+    ranges: Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index)),
+    anchorNode: selection.anchorNode, anchorOffset: selection.anchorOffset,
+    focusNode: selection.focusNode, focusOffset: selection.focusOffset,
+  };
+}
+
+function sameSelection(selection: Selection, state: SelectionState): boolean {
+  return selection.rangeCount === state.ranges.length &&
+    selection.anchorNode === state.anchorNode && selection.anchorOffset === state.anchorOffset &&
+    selection.focusNode === state.focusNode && selection.focusOffset === state.focusOffset &&
+    state.ranges.every((range, index) => selection.getRangeAt(index) === range);
+}
+
+function focusKeepingSelection(element: HTMLElement): void {
+  const selection = element.ownerDocument.defaultView!.getSelection();
+  const previous = selection && selectionState(selection);
+  // preventScroll does not prevent a focus change from collapsing the document selection.
+  element.focus({ preventScroll: true });
+  if (!selection || !previous || sameSelection(selection, previous)) return;
+  selection.removeAllRanges();
+  for (const range of previous.ranges) selection.addRange(range);
+  if (previous.anchorNode && previous.focusNode &&
+    (selection.anchorNode !== previous.anchorNode || selection.anchorOffset !== previous.anchorOffset)) {
+    selection.setBaseAndExtent(previous.anchorNode, previous.anchorOffset, previous.focusNode, previous.focusOffset);
+  }
+}
+
 type SearchOptions = {
   highlights?: SearchHighlights;
   status?: HTMLElement;
@@ -248,6 +281,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   let truncated = false;
   let frame: number | undefined;
   let disposed = false;
+  let selected: SelectionState | undefined;
 
   function cancelSearch(): void {
     if (frame !== undefined) view.cancelAnimationFrame(frame);
@@ -275,6 +309,34 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
   function paint(): void {
     if (!panel.hidden) count.textContent = `${index + 1}/${ranges.length}${truncated ? "+" : ""}`;
     if (options.highlights) updateHighlights(options.highlights, shown ? ranges : [], index);
+    else if (!shown) clearSelection();
+  }
+
+  function clearSelection(): void {
+    const previous = selected;
+    selected = undefined;
+    if (!previous) return;
+    const selection = view.getSelection();
+    if (selection && sameSelection(selection, previous)) selection.removeAllRanges();
+  }
+
+  function selectCurrent(): void {
+    if (options.highlights) return;
+    const range = ranges[index];
+    if (!range) {
+      clearSelection();
+      return;
+    }
+    const selection = view.getSelection();
+    if (!selection) return;
+    selection.removeAllRanges();
+    // User adjustments to Selection must not change the cached match ranges.
+    selection.addRange(range.cloneRange());
+    if (!panel.hidden && document.activeElement !== input) {
+      input.focus({ preventScroll: true });
+      selection.setBaseAndExtent(range.startContainer, range.startOffset, range.endContainer, range.endOffset);
+    }
+    selected = selectionState(selection);
   }
 
   function reveal(): void {
@@ -309,7 +371,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       ensureFresh();
       paint();
       input.value = query;
-      input.focus({ preventScroll: true });
+      focusKeepingSelection(input);
       input.select();
     },
     close(): void {
@@ -318,7 +380,7 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       panel.hidden = true;
       shown = false;
       paint();
-      article.focus({ preventScroll: true });
+      focusKeepingSelection(article);
     },
     move(direction: 1 | -1): boolean {
       if (disposed || (!query && panel.hidden)) return false;
@@ -327,12 +389,14 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       index = step(panel.hidden && changed ? -1 : index, ranges.length, direction);
       shown = true;
       paint();
+      selectCurrent();
       reveal();
       return true;
     },
     documentReplaced(): void {
       if (disposed) return;
       cancelSearch();
+      clearSelection();
       segments = [];
       ranges = [];
       segmentsStale = true;
