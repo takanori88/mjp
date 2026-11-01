@@ -12,6 +12,7 @@
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: auto; }
+#document:focus { outline: none; }
 ::highlight(mjp-search) { color: #24292f; background-color: #ffed99; }
 ::highlight(mjp-search-current) { color: #24292f; background-color: #ffb347; }
 body { margin: 0; }
