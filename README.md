@@ -58,10 +58,12 @@ The CLI starts with one preview in its own process. Normal Finder launches are e
 | Shortcut | Action |
 | --- | --- |
 | `⌘F`, `/` | Open search in the current document. |
-| `Enter`, `Shift+Enter` | Move to the next or previous match while the search input has focus. |
+| `Enter` | Confirm the current match from the search input, close search, and return focus to the document. |
 | `n`, `N` | Move to the next or previous match using the last query while search is closed. |
-| `Esc` | Close search if it is open; otherwise close the current preview. |
-| `q`, `⌘W` | Close the current preview on macOS. |
+| `Esc` with search open | Cancel search and restore the previous search state and scroll position. |
+| `Esc` with search closed and marks visible | Clear the search marks and count badge. |
+| `Esc` with search closed and no marks | Close the current preview. |
+| `q`, `⌘W` | Close the current preview on macOS (`q` outside the search input). |
 | `⌘Q` | Quit all windows in this mjp process. |
 | `j`, `k` | Scroll down or up. |
 | `Ctrl+D`, `Ctrl+U` | Scroll down or up by half a window. |
@@ -70,13 +72,19 @@ The CLI starts with one preview in its own process. Normal Finder launches are e
 
 ### Finding text
 
-Search appears only when opened. Typing updates the matches and scrolls to the first one. The panel shows the current position and count, such as `3/12` or `0/0`. Search keeps the first 1000 matches: exactly 1000 shows `3/1000`, while more shows `3/1000+`; navigation wraps within those stored matches.
+Search follows Vim-style controls. Opening search saves your reading position. Typing updates the matches and scrolls to the first match at or after the top of that saved reading area, accounting for the banner and search panel; if none remains, it wraps to the first match. Reopening an existing query also selects from your new reading position.
+
+Enter confirms the current match, closes the panel, and returns focus to the document. Highlights stay visible, with a count badge such as `[3/12]` at the end of the current matching line. A query with no matches stays editable as `0/0`; an empty query closes search and clears its marks. While open, the panel shows the current position and count. Search keeps the first 1000 matches: exactly 1000 shows `3/1000`, while more shows `3/1000+` (or `[3/1000+]` in the badge); navigation wraps within those stored matches.
+
+Use `n` or `N` to move forward or backward without reopening the panel. If you have scrolled the current match out of view, `n` selects the first match at or after the top of the visible reading area, and `N` selects the last match at or before its bottom. If none remains in that direction, navigation wraps. A match already fully in view advances normally to the next or previous match.
+
+Esc while search is open cancels the edit and restores the previous query, match number, marks, and saved scroll position. With search closed, Esc clears visible marks and the badge while retaining the query and match number; `n` or `N` shows them again and moves. Esc when no marks are visible closes the preview. With search open, `⌘F` refocuses the input and selects its query without changing the saved position. Reading shortcuts such as `j`, `k`, and `q` are inactive in the search input; Enter and Esc are left to the input method during IME composition.
 
 Search covers rendered text, including code, table cells, and link labels, in the current document. Matching ignores case and fullwidth ASCII forms, but does not cross paragraphs, list items, table cells, or explicit line breaks. Alt text for local images eligible for loading is excluded even if loading fails. Alt text for remote images and images beyond the 64-reference limit remains searchable.
 
-Reading shortcuts such as `j`, `k`, and `q` are inactive in the search input. `⌘F` refocuses the input and selects its query; Enter and Esc are left to the input method during IME composition. Esc removes search highlights and keeps the scroll position and query. After closing search, `n` or `N` restores the highlights and moves without showing the panel or count. Live reload searches again with the same query, keeping the match number if it still exists and otherwise returning to the first match, without requesting a search scroll.
+Live reload searches again with the same query, keeping the match number if it still exists and otherwise returning to the first match, without requesting a search scroll. The badge follows layout changes, including images loading; it is hidden while the panel is open or no matches remain.
 
-On WebViews without all-match highlight support, typing only scrolls to the first match. Moving with Enter, Shift+Enter, `n`, or `N` selects the current match in the document. Enter keeps focus in the search input; Esc clears only the selection search set, preserving a selection you made afterward. `⌘C` uses the WebView's normal copy behavior for the focused input or document selection.
+On WebViews without all-match highlight support, typing scrolls to the match chosen from the saved position and leaves the document selection unchanged. Enter confirms and selects the current match with focus in the document; `n` and `N` select their destination match. The same count badge is available. Clearing marks with Esc removes only the selection set by search, preserving a selection you made afterward. `⌘C` uses the WebView's normal copy behavior for the focused input or document selection.
 
 ### Copying code
 
