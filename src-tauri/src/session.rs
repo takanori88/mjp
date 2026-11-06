@@ -13,7 +13,7 @@ use crate::{
     documents::Documents,
     navigation,
     open_requests::{self, Failures, OpenDecision, Origin, Requests, WindowKind},
-    settings::{self, Settings, WindowSettings},
+    settings::{self, Settings, WindowPosition, WindowSettings},
     watch, Document, DocumentState,
 };
 
@@ -58,8 +58,8 @@ fn top_right_position(
     let count = 1.0 + (ox.min(sy - oy) / step).floor();
     let offset = (f64::from(slot) % count) * step;
     (
-        work_area.position.x + ox - offset,
-        work_area.position.y + oy + offset,
+        work_area.position.x + (ox - offset),
+        work_area.position.y + (oy + offset),
     )
 }
 
@@ -77,7 +77,32 @@ fn expected_content_size(config: &WindowConfig, work_area: LogicalSize<f64>) -> 
     }
 }
 
-fn window_config(template: &WindowConfig, label: &str, window: &WindowSettings) -> WindowConfig {
+fn preview_position(
+    config: &WindowConfig,
+    window: &WindowSettings,
+    work_area: Option<LogicalRect<f64, f64>>,
+    slot: u32,
+) -> Option<(f64, f64)> {
+    match window.position? {
+        WindowPosition::TopRight => {
+            let work_area = work_area?;
+            Some(top_right_position(
+                work_area,
+                expected_content_size(config, work_area.size),
+                (window.margin_x.unwrap_or(16), window.margin_y.unwrap_or(16)),
+                slot,
+                24.0,
+            ))
+        }
+    }
+}
+
+fn window_config(
+    template: &WindowConfig,
+    label: &str,
+    window: &WindowSettings,
+    position: Option<(f64, f64)>,
+) -> WindowConfig {
     let mut config = template.clone();
     config.label = label.into();
     if let Some(width) = window.width {
@@ -88,6 +113,11 @@ fn window_config(template: &WindowConfig, label: &str, window: &WindowSettings) 
     }
     config.prevent_overflow = (window.width.is_some() || window.height.is_some())
         .then_some(PreventOverflowConfig::Enable(true));
+    if let Some((x, y)) = position {
+        config.x = Some(x);
+        config.y = Some(y);
+        config.center = false;
+    }
     config
 }
 
@@ -103,7 +133,7 @@ fn create_preview(
     };
     let document = Arc::new(document);
     let documents = app.state::<Documents>();
-    let result = documents.create(Arc::clone(&document), kind, |label, _slot| {
+    let result = documents.create(Arc::clone(&document), kind, |label, slot| {
         if let Some(path) = document.path.clone() {
             match watch::start(app.clone(), label.into(), Arc::clone(&document), path) {
                 Ok(watcher) => documents.attach_watcher(label, watcher),
@@ -114,11 +144,23 @@ fn create_preview(
             document.add_warning(warning.clone());
         }
         let dev_url = app.config().build.dev_url.clone();
-        let config = window_config(
-            &app.config().app.windows[0],
-            label,
-            &app.state::<PreviewSettings>().settings.window,
-        );
+        let preview_settings = app.state::<PreviewSettings>();
+        let window_settings = &preview_settings.settings.window;
+        let work_area = if window_settings.position.is_some() {
+            app.primary_monitor().ok().flatten().map(|monitor| {
+                let scale = monitor.scale_factor();
+                LogicalRect {
+                    position: monitor.work_area().position.to_logical::<f64>(scale),
+                    size: monitor.work_area().size.to_logical::<f64>(scale),
+                }
+            })
+        } else {
+            None
+        };
+        let template = &app.config().app.windows[0];
+        let config = window_config(template, label, window_settings, None);
+        let position = preview_position(&config, window_settings, work_area, slot);
+        let config = window_config(template, label, window_settings, position);
         let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
             .title(title)
             .theme(app.state::<PreviewSettings>().settings.theme.native_theme())
@@ -517,15 +559,18 @@ mod tests {
 
     #[test]
     fn fractional_origins_preserve_exact_step_boundaries_and_wrapping() {
-        for (width, count) in [
-            (1056.0_f64.next_down(), 10),
-            (1056.0, 11),
-            (1056.0_f64.next_up(), 11),
+        for (width, height, count) in [
+            (1056.0_f64.next_down(), 856.0, 10),
+            (1056.0, 856.0, 11),
+            (1056.0_f64.next_up(), 856.0, 11),
+            (1440.0, 856.0_f64.next_down(), 10),
+            (1440.0, 856.0, 11),
+            (1440.0, 856.0_f64.next_up(), 11),
         ] {
             for origin in [(0.0, 0.0), (0.1, -10.3), (-1920.5, 23.25)] {
                 let area = LogicalRect {
                     position: origin.into(),
-                    size: (width, 856.0).into(),
+                    size: (width, height).into(),
                 };
                 for slot in [count - 1, count, count + 1] {
                     let offset = f64::from(slot % count) * 24.0;
@@ -610,7 +655,7 @@ mod tests {
                 (800.0, 600.0),
             ),
         ] {
-            let config = window_config(&template, "preview-size", &window);
+            let config = window_config(&template, "preview-size", &window, None);
             assert_eq!(expected_content_size(&config, area.into()), expected.into());
             assert_eq!(config.width, window.width.map(f64::from).unwrap_or(800.0));
             assert_eq!(config.height, window.height.map(f64::from).unwrap_or(600.0));
@@ -618,10 +663,108 @@ mod tests {
     }
 
     #[test]
+    fn explicit_position_changes_only_coordinates_and_disables_centering() {
+        let template = preview_template();
+        let original = template.clone();
+        for window in [
+            WindowSettings::default(),
+            WindowSettings {
+                width: Some(1000),
+                height: Some(700),
+                ..Default::default()
+            },
+        ] {
+            let mut expected = window_config(&template, "preview-position", &window, None);
+            expected.x = Some(624.5);
+            expected.y = Some(41.25);
+            expected.center = false;
+            assert_eq!(
+                window_config(&template, "preview-position", &window, Some((624.5, 41.25))),
+                expected
+            );
+            assert_eq!(template, original);
+        }
+    }
+
+    #[test]
+    fn preview_placement_requires_both_opt_in_and_a_work_area_and_uses_default_margins() {
+        let template = preview_template();
+        let area = LogicalRect {
+            position: (10.0, 30.0).into(),
+            size: (1440.0, 900.0).into(),
+        };
+        let window = WindowSettings {
+            position: Some(settings::WindowPosition::TopRight),
+            ..Default::default()
+        };
+        let config = window_config(&template, "preview", &window, None);
+        assert_eq!(
+            preview_position(&config, &window, Some(area), 0),
+            Some((634.0, 46.0))
+        );
+        assert_eq!(
+            preview_position(&config, &window, Some(area), 2),
+            Some((586.0, 94.0))
+        );
+        for (margin, expected) in [((0, 0), (626.0, 54.0)), ((32, 48), (594.0, 102.0))] {
+            let custom = WindowSettings {
+                position: window.position,
+                margin_x: Some(margin.0),
+                margin_y: Some(margin.1),
+                ..Default::default()
+            };
+            assert_eq!(
+                preview_position(&config, &custom, Some(area), 1),
+                Some(expected)
+            );
+        }
+        let margins_only = WindowSettings {
+            margin_x: Some(0),
+            margin_y: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            preview_position(&config, &margins_only, Some(area), 2),
+            None
+        );
+        let sized = WindowSettings {
+            width: Some(2000),
+            position: window.position,
+            ..Default::default()
+        };
+        let config = window_config(&template, "preview", &sized, None);
+        assert_eq!(
+            preview_position(&config, &sized, Some(area), 2),
+            Some((10.0, 46.0))
+        );
+        assert_eq!(preview_position(&config, &sized, None, 2), None);
+        assert!(config.center);
+        assert_eq!(config.width, 2000.0);
+        assert_eq!(
+            config.prevent_overflow,
+            Some(PreventOverflowConfig::Enable(true))
+        );
+        let small_area = LogicalRect {
+            size: (640.0, 480.0).into(),
+            ..area
+        };
+        let config = window_config(&template, "preview", &window, None);
+        assert_eq!(
+            preview_position(&config, &window, Some(small_area), 2),
+            Some((10.0, 30.0))
+        );
+    }
+
+    #[test]
     fn unspecified_window_dimensions_preserve_the_template_except_its_label() {
         let template = preview_template();
         let original = template.clone();
-        let config = window_config(&template, "preview-1", &settings::WindowSettings::default());
+        let config = window_config(
+            &template,
+            "preview-1",
+            &settings::WindowSettings::default(),
+            None,
+        );
         let mut expected = template.clone();
         expected.label = "preview-1".into();
         assert_eq!(config, expected);
@@ -660,7 +803,7 @@ mod tests {
                     ..WindowSettings::default()
                 },
             ] {
-                let config = window_config(&template, "preview-2", &window);
+                let config = window_config(&template, "preview-2", &window, None);
                 let mut expected = template.clone();
                 expected.label = "preview-2".into();
                 expected.width = window.width.map(f64::from).unwrap_or(template.width);
@@ -687,6 +830,7 @@ mod tests {
                 height: Some(1),
                 ..WindowSettings::default()
             },
+            None,
         );
         let mut expected = original.clone();
         expected.label = "preview-3".into();
