@@ -90,6 +90,23 @@ Successive windows in the same process cascade 24 points left and down. The step
 
 The work area is read for each new window. Margins shrink when necessary to prioritize fitting; a content dimension larger than the work area aligns that axis to its left or top edge. Explicit dimensions still use the size fitting described above. Positioning aligns the outer top-left corner, but the title bar is not included in the bottom-edge calculation, so the outer bottom edge may extend by its height. Restart the receiving process after changing configuration. Native placement, title-bar accessibility, multiple displays, and Dock variations remain to be checked on the target Mac.
 
+### Always-on-top configuration
+
+Keep previews above ordinary windows when another app is active in a normal desktop Space:
+
+```toml
+[window]
+always_on_top = true
+```
+
+Add this key to the same `[window]` table as any dimensions or position settings. Only TOML booleans `true` and `false` are accepted. An omitted key or `false` keeps ordinary window behavior. Other types, such as `"true"`, `1`, or `[]`, use `false` with one warning while valid theme, size, and position settings still apply. Invalid TOML discards all settings as described above.
+
+The setting applies to document, stdin, Welcome, and failure previews, including windows added later in the same process. Restart the receiving process after changing it; there is no runtime toggle. It does not change size or placement.
+
+This does not guarantee display on another Space or above a fullscreen app, or priority over other windows at the same or a higher level (including other apps' always-on-top windows). mjp windows share a level and can overlap normally; their stacking order is not fixed by opening order or cascade slot.
+
+Native behavior remains unchecked on the target Mac, including focus and keyboard input, multiple windows, and fullscreen transitions. Whether a preview stays on top after mjp itself leaves fullscreen also needs native verification.
+
 ### Opening files from Finder
 
 After [installing the app](#installation), select a `.md` or `.markdown` file in Finder and choose **Open With → mjp**. You can also make mjp the default app using the installation steps below, then double-click files to preview them.
