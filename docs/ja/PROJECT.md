@@ -266,7 +266,7 @@ def hello():
 
 ## Theme
 
-既定ではOSのLight / Dark modeに自動追従する。現在は `~/.config/mjp/config.toml` によるライト／ダーク固定にも対応している。[テーマ設定](README.md#テーマ設定) を参照。
+既定ではOSのLight / Dark modeに自動追従する。現在は `~/.config/mjp/config.toml` によるライト／ダーク固定にも対応している。[テーマ設定](CONFIGURATION.md#テーマ設定) を参照。
 
 基本デザインは、
 

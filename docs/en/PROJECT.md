@@ -133,7 +133,7 @@ def hello():
 
 ### Theme
 
-Follow the OS light and dark appearance automatically by default. A fixed light or dark appearance is now available through `~/.config/mjp/config.toml`; see [theme configuration](../../README.md#theme-configuration). Use GitHub Markdown and VS Code Markdown Preview as references for readability, including type, spacing, and code styling. Do not copy another product's CSS wholesale.
+Follow the OS light and dark appearance automatically by default. A fixed light or dark appearance is now available through `~/.config/mjp/config.toml`; see [theme configuration](CONFIGURATION.md#theme-configuration). Use GitHub Markdown and VS Code Markdown Preview as references for readability, including type, spacing, and code styling. Do not copy another product's CSS wholesale.
 
 ### Live reload
 

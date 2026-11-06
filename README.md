@@ -43,69 +43,20 @@ Documents up to 128 KiB are formatted as Markdown. Larger documents show their c
 
 Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app. Relative file links are not opened. Raw HTML remains plain text.
 
-### Theme configuration
+### Configuration
 
-Create `~/.config/mjp/config.toml` to fix the appearance of all previews in a process:
-
-```toml
-theme = "dark"
-```
-
-Use `"light"` or `"dark"` for a fixed appearance. `"system"`, an omitted `theme`, or a missing file follows the OS appearance, including changes while mjp is running. Values are case-sensitive. There is no `--theme` CLI option or settings UI.
-
-The location is fixed at `$HOME/.config/mjp/config.toml`; mjp does not use `XDG_CONFIG_HOME` and does not follow the XDG configuration specification. This gives terminal and Finder launches the same location when they have the same `HOME`. Changing `HOME` in a terminal selects a different location. An unset, empty, or relative `HOME` disables configuration silently.
-
-Each GUI process reads configuration once before creating its first window. Changes apply only to a new process: windows added to an existing process, including Finder requests, keep its original settings. Quit the receiving app before relaunching to use changed settings.
-
-Configuration must be a regular UTF-8 TOML file of at most 64 KiB; symbolic links to regular files are followed. Read failures and invalid TOML use defaults with an in-window warning. An invalid `theme` uses `"system"`; unknown top-level settings produce warnings while valid settings still apply. A missing file is silent; a detected dangling link at `config.toml` produces a warning. Warnings share the status banner, with live-reload warnings first. At most three warnings are displayed, each limited to 200 characters including any `…`, followed by the omitted count. A read error temporarily takes precedence, and warnings return after recovery.
-
-### Window size configuration
-
-Set either or both initial content dimensions in the same `~/.config/mjp/config.toml` file:
+Create `~/.config/mjp/config.toml` to customize previews. See [Configuration](docs/en/CONFIGURATION.md) for defaults, accepted values, loading rules, warnings, and limitations.
 
 ```toml
+theme = "dark"       # Follow the OS ("system") or use "light" / "dark".
 [window]
-width = 1000
-height = 700
+width = 1000         # Initial content width in logical pixels.
+height = 700         # Initial content height in logical pixels.
+position = "top-right" # Open at the primary work area's top right.
+margin_x = 16        # Distance from the right edge in logical pixels.
+margin_y = 16        # Distance from the top edge in logical pixels.
+always_on_top = true # Stay above ordinary windows in a desktop Space.
 ```
-
-Dimensions use logical pixels (points on macOS), excluding the title bar. Previews open centered unless a position is configured below; an omitted or invalid width uses 800, and an omitted or invalid height uses 600. Each value must be an integer written with ASCII digits only, from `1` to `4294967295`. Signs (`+1000`), separators (`1_000`), base prefixes (`0x3e8`), floats, and strings are rejected with a warning for that field; the other dimension and theme still apply. A non-table `window` uses default dimensions with one warning. Unknown keys directly under `window` each produce a warning; unknown nested tables produce one warning without inspecting their contents. Invalid TOML, including `01` or duplicate keys, discards all settings.
-
-A valid explicit dimension enables Tauri's initial overflow prevention against the primary display's work area. The OS and display can constrain the actual content size; the entire title bar is not guaranteed to fit. Without valid explicit dimensions, the existing 800×600 size is retained. Manual resizing or moving to another display does not trigger another fit. These settings apply to document, stdin, Welcome, and failure previews, including windows added later to the same process. Restart the receiving process to use changed settings.
-
-### Window position configuration
-
-Open previews at the top right of the primary display's work area (excluding the menu bar and Dock) in the same configuration file. If you also set dimensions, combine these keys in one `[window]` table:
-
-```toml
-[window]
-position = "top-right"
-margin_x = 16
-margin_y = 16
-```
-
-`margin_x` is the distance from the right edge and `margin_y` from the top edge, in logical pixels (points on macOS). Each defaults to 16 and accepts integers from `0` to `4294967295`, written with ASCII digits only. Invalid margins produce one warning per field and use 16; valid margins without `position` are accepted silently and have no placement effect. Only the case-sensitive string `"top-right"` is supported. An omitted position keeps centered placement without cascading; an invalid position does the same with a warning. If the primary display cannot be obtained, previews open centered without a warning and keep the configured dimensions.
-
-Successive windows in the same process cascade 24 points left and down. The step is fixed. Positions wrap after the number that fit in the work area, so displayed positions can overlap. New windows reuse the smallest free cascade slot after closed windows are destroyed; moving a window manually does not change its slot. Welcome and failure previews share these rules. While Welcome occupies slot 0, the first document uses slot 1, and Welcome closes only after that document window is created successfully. Reopening an already open document only focuses it. Separate processes, including separate CLI launches, do not coordinate their positions.
-
-The work area is read for each new window. Margins shrink when necessary to prioritize fitting; a content dimension larger than the work area aligns that axis to its left or top edge. Explicit dimensions still use the size fitting described above. Positioning aligns the outer top-left corner, but the title bar is not included in the bottom-edge calculation, so the outer bottom edge may extend by its height. Restart the receiving process after changing configuration. Native placement, title-bar accessibility, multiple displays, and Dock variations remain to be checked on the target Mac.
-
-### Always-on-top configuration
-
-Keep previews above ordinary windows when another app is active in a normal desktop Space:
-
-```toml
-[window]
-always_on_top = true
-```
-
-Add this key to the same `[window]` table as any dimensions or position settings. Only TOML booleans `true` and `false` are accepted. An omitted key or `false` keeps ordinary window behavior. Other types, such as `"true"`, `1`, or `[]`, use `false` with one warning while valid theme, size, and position settings still apply. Invalid TOML discards all settings as described above.
-
-The setting applies to document, stdin, Welcome, and failure previews, including windows added later in the same process. Restart the receiving process after changing it; there is no runtime toggle. It does not change size or placement.
-
-This does not guarantee display on another Space or above a fullscreen app, or priority over other windows at the same or a higher level (including other apps' always-on-top windows). mjp windows share a level and can overlap normally; their stacking order is not fixed by opening order or cascade slot.
-
-Native behavior remains unchecked on the target Mac, including focus and keyboard input, multiple windows, and fullscreen transitions. Whether a preview stays on top after mjp itself leaves fullscreen also needs native verification.
 
 ### Opening files from Finder
 
@@ -162,31 +113,7 @@ Each image is limited to 10 MiB, and a document loads at most 64 image reference
 
 ### Yazi + Neovim + mjp
 
-Use Yazi to select a file, Neovim to edit it, and `mjp` to preview saved changes in a separate window. The tools work together through the file; no editor plugin is needed.
-
-This workflow was manually confirmed with Yazi 26.1.22 and the macOS release build of `mjp`. Make sure `mjp` and `nvim` are on your `PATH`. Merge the following into `~/.config/yazi/yazi.toml`, reusing existing sections rather than duplicating them:
-
-```toml
-[opener]
-markdown = [
-  { run = 'mjp -- %s1 && nvim -- %s1', desc = "nvim + mjp", block = true, for = "macos" },
-]
-
-[open]
-prepend_rules = [
-  { url = "*.md", use = "markdown" },
-  { url = "*.markdown", use = "markdown" },
-]
-```
-
-If you already define `open.rules`, you can instead insert these two Markdown rules at the start of that list, before any `text/*` rule, keeping the remaining rules. The `%s1` placeholder passes the first selected file. See [Yazi's opener configuration](https://yazi-rs.github.io/docs/configuration/yazi/#opener) for the configuration syntax. An existing Yazi pane previewer such as `piper` with `bat` can stay in place.
-
-1. Restart Yazi, select one local Markdown file, and press Enter.
-2. **mjp takes focus when its window opens. Switch back to the terminal before editing in Neovim.**
-3. Save with `:w`; mjp updates the preview automatically.
-4. Quit Neovim to return to Yazi. The preview stays open; focus it and press `Esc` or `q` when finished.
-
-The macOS release CLI detaches the preview itself, so `&&` can start Neovim after the CLI succeeds. `block = true` lets Neovim use the terminal until it exits; no `&` or `orphan = true` is needed for this opener. This workflow assumes a release build, not `tauri dev`.
+Select a file in Yazi, edit in Neovim, and preview saved changes with mjp. See [Yazi + Neovim + mjp](docs/en/YAZI.md) for setup and the workflow.
 
 ## Installation
 
