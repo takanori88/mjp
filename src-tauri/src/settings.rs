@@ -28,13 +28,22 @@ impl ThemeSetting {
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct WindowSettings {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Settings {
     pub theme: ThemeSetting,
+    pub window: WindowSettings,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SettingsIssue {
     InvalidTheme,
+    InvalidWindow,
+    InvalidWindowDimension(&'static str),
     UnknownKey(String),
     Syntax(String),
 }
@@ -74,6 +83,33 @@ pub(crate) fn parse_settings(text: &str) -> (Settings, Vec<SettingsIssue>) {
                     ThemeSetting::System
                 }
             };
+        } else if key.get_ref() == "window" {
+            if let Some(window) = value.get_ref().as_table() {
+                for (key, value) in window.iter() {
+                    let (name, dimension) = match key.get_ref().as_ref() {
+                        "width" => ("width", &mut settings.window.width),
+                        "height" => ("height", &mut settings.window.height),
+                        _ => {
+                            issues.push(SettingsIssue::UnknownKey(format!(
+                                "window.{}",
+                                key.get_ref()
+                            )));
+                            continue;
+                        }
+                    };
+                    if matches!(value.get_ref(), toml::de::DeValue::Integer(_)) {
+                        let raw = &text[value.span()];
+                        if !raw.is_empty() && raw.bytes().all(|byte| byte.is_ascii_digit()) {
+                            *dimension = raw.parse().ok().filter(|value| *value != 0);
+                        }
+                    }
+                    if dimension.is_none() {
+                        issues.push(SettingsIssue::InvalidWindowDimension(name));
+                    }
+                }
+            } else {
+                issues.push(SettingsIssue::InvalidWindow);
+            }
         } else {
             issues.push(SettingsIssue::UnknownKey(key.get_ref().to_string()));
         }
@@ -136,6 +172,13 @@ pub(crate) fn load_settings(path: &Path) -> (Settings, Vec<String>) {
                         SettingsIssue::InvalidTheme => {
                             "invalid theme; expected system, light, or dark".into()
                         }
+                        SettingsIssue::InvalidWindow => {
+                            "window must be a table; using default window settings".into()
+                        }
+                        SettingsIssue::InvalidWindowDimension(key) => {
+                            let default = if key == "width" { 800 } else { 600 };
+                            format!("window.{key} must use ASCII digits only and be from 1 to 4294967295; using {default}")
+                        }
                         SettingsIssue::UnknownKey(key) => format!("unknown setting: {key}"),
                         SettingsIssue::Syntax(message) => format!("invalid TOML: {message}"),
                     };
@@ -151,6 +194,241 @@ pub(crate) fn load_settings(path: &Path) -> (Settings, Vec<String>) {
 mod tests {
     use super::*;
     use std::{ffi::OsStr, path::PathBuf};
+
+    #[test]
+    fn omitted_or_empty_window_uses_defaults_without_issues() {
+        for text in ["", "theme = \"system\"", "[window]", "window = {}"] {
+            let (settings, issues) = parse_settings(text);
+            assert_eq!(settings.window.width, None);
+            assert_eq!(settings.window.height, None);
+            assert!(issues.is_empty(), "{text}: {issues:?}");
+        }
+    }
+
+    #[test]
+    fn a_single_window_dimension_keeps_the_other_unspecified() {
+        for (key, expected) in [
+            (
+                "width",
+                WindowSettings {
+                    width: Some(1000),
+                    height: None,
+                },
+            ),
+            (
+                "height",
+                WindowSettings {
+                    width: None,
+                    height: Some(1000),
+                },
+            ),
+        ] {
+            let (settings, issues) = parse_settings(&format!("[window]\n{key} = 1000"));
+            assert_eq!(settings.window, expected);
+            assert!(issues.is_empty());
+        }
+    }
+
+    #[test]
+    fn window_dimensions_accept_the_positive_u32_boundaries_and_default_width() {
+        for value in [1, 800, u32::MAX] {
+            let (settings, issues) =
+                parse_settings(&format!("[window]\nwidth = {value}\nheight = {value}"));
+            assert_eq!(
+                settings.window,
+                WindowSettings {
+                    width: Some(value),
+                    height: Some(value)
+                }
+            );
+            assert!(issues.is_empty());
+        }
+    }
+
+    fn assert_invalid_dimension_keeps_other_settings(value: &str) {
+        for (key, other) in [("width", "height"), ("height", "width")] {
+            let (settings, issues) = parse_settings(&format!(
+                "theme = \"dark\"\n[window]\n{key} = {value}\n{other} = 900"
+            ));
+            assert_eq!(settings.theme, ThemeSetting::Dark);
+            assert_eq!(
+                settings.window,
+                if key == "width" {
+                    WindowSettings {
+                        width: None,
+                        height: Some(900),
+                    }
+                } else {
+                    WindowSettings {
+                        width: Some(900),
+                        height: None,
+                    }
+                },
+                "{key} = {value}"
+            );
+            assert_eq!(issues, vec![SettingsIssue::InvalidWindowDimension(key)]);
+        }
+    }
+
+    #[test]
+    fn invalid_window_ranges_report_each_dimension_and_keep_independent_settings() {
+        for value in ["0", "4294967296", "-1", "-0", "9223372036854775808"] {
+            assert_invalid_dimension_keeps_other_settings(value);
+        }
+        assert_eq!(
+            parse_settings("[window]\nwidth = 0\nheight = -1"),
+            (
+                Settings::default(),
+                vec![
+                    SettingsIssue::InvalidWindowDimension("height"),
+                    SettingsIssue::InvalidWindowDimension("width")
+                ]
+            )
+        );
+        let (settings, issues) =
+            parse_settings("theme = true\n[window]\nwidth = 900\nheight = 700");
+        assert_eq!(settings.theme, ThemeSetting::System);
+        assert_eq!(
+            settings.window,
+            WindowSettings {
+                width: Some(900),
+                height: Some(700)
+            }
+        );
+        assert_eq!(issues, vec![SettingsIssue::InvalidTheme]);
+    }
+
+    #[test]
+    fn window_dimensions_require_unsigned_unseparated_decimal_spelling() {
+        for value in ["+1000", "1_000", "0x3e8", "0o1750", "0b1111101000"] {
+            assert_invalid_dimension_keeps_other_settings(value);
+        }
+    }
+
+    #[test]
+    fn noninteger_window_dimensions_report_only_the_invalid_field() {
+        for value in ["1000.0", "\"1000\"", "true", "[]", "{ a = 1 }"] {
+            assert_invalid_dimension_keeps_other_settings(value);
+        }
+    }
+
+    #[test]
+    fn window_table_forms_preserve_each_values_original_spelling() {
+        for (value, expected) in [("1000", Some(1000)), ("+1000", None), ("1_000", None)] {
+            for (key, other) in [("width", "height"), ("height", "width")] {
+                for body in [
+                    format!("[window]\r\n{key} = {value}  # 寸法\r\n{other} = 900\r\n"),
+                    format!("window = {{ {key} = {value}  , {other} = 900 }} # 寸法\r\n"),
+                    format!("window.{key} = {value}  # 寸法\r\nwindow.{other} = 900\r\n"),
+                ] {
+                    let text = format!("# 日本語のコメント\r\ntheme = \"dark\"\r\n{body}");
+                    let (settings, issues) = parse_settings(&text);
+                    assert_eq!(settings.theme, ThemeSetting::Dark);
+                    assert_eq!(
+                        settings.window,
+                        if key == "width" {
+                            WindowSettings {
+                                width: expected,
+                                height: Some(900),
+                            }
+                        } else {
+                            WindowSettings {
+                                width: Some(900),
+                                height: expected,
+                            }
+                        },
+                        "{text}"
+                    );
+                    assert_eq!(
+                        issues,
+                        if expected.is_some() {
+                            vec![]
+                        } else {
+                            vec![SettingsIssue::InvalidWindowDimension(key)]
+                        },
+                        "{text}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nontable_window_reports_one_issue_and_keeps_the_theme() {
+        for body in ["window = 1", "window = []", "[[window]]\nwidth = 1000"] {
+            let (settings, issues) = parse_settings(&format!("theme = \"dark\"\n{body}"));
+            assert_eq!(settings.theme, ThemeSetting::Dark);
+            assert_eq!(settings.window, WindowSettings::default());
+            assert_eq!(issues, vec![SettingsIssue::InvalidWindow]);
+        }
+    }
+
+    #[test]
+    fn unknown_window_keys_are_reported_once_without_interpreting_their_values() {
+        for value in [
+            "1",
+            "9223372036854775808",
+            "99999999999999999999999999999999999999",
+        ] {
+            let (settings, issues) = parse_settings(&format!("theme = \"dark\"\n[window]\nwidth = 1000\nheight = 700\nposition = {value}\nfont_size = 16\n[window.foo]\nwidth = 0\nextra = true"));
+            assert_eq!(settings.theme, ThemeSetting::Dark);
+            assert_eq!(
+                settings.window,
+                WindowSettings {
+                    width: Some(1000),
+                    height: Some(700)
+                }
+            );
+            assert_eq!(
+                issues,
+                vec![
+                    SettingsIssue::UnknownKey("window.font_size".into()),
+                    SettingsIssue::UnknownKey("window.foo".into()),
+                    SettingsIssue::UnknownKey("window.position".into()),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_window_toml_discards_theme_and_both_dimensions() {
+        for body in [
+            "width = +0x3e8",
+            "width = -0x3e8",
+            "width = _1000",
+            "width = 1000_",
+            "width = 1__000",
+            "width = 1000\nwidth = 900",
+            "width = 01",
+            "width = 1000\n[window.unknown]\nbroken = [",
+        ] {
+            let (settings, issues) =
+                parse_settings(&format!("theme = \"dark\"\n[window]\nheight = 700\n{body}"));
+            assert_eq!(settings, Settings::default(), "{body}");
+            assert!(
+                matches!(issues.as_slice(), [SettingsIssue::Syntax(_)]),
+                "{body}: {issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn window_issues_occupy_their_lexical_position_among_top_level_issues() {
+        let (settings, issues) = parse_settings("zebra = true\ntheme = 1\nalpha = 1\n[window]\nzebra = 1\nwidth = 0\nalpha = 1\nheight = false");
+        assert_eq!(settings, Settings::default());
+        assert_eq!(
+            issues,
+            vec![
+                SettingsIssue::UnknownKey("alpha".into()),
+                SettingsIssue::InvalidTheme,
+                SettingsIssue::UnknownKey("window.alpha".into()),
+                SettingsIssue::InvalidWindowDimension("height"),
+                SettingsIssue::InvalidWindowDimension("width"),
+                SettingsIssue::UnknownKey("window.zebra".into()),
+                SettingsIssue::UnknownKey("zebra".into()),
+            ]
+        );
+    }
 
     #[test]
     fn config_path_requires_an_absolute_nonempty_home() {
@@ -179,7 +457,13 @@ mod tests {
         ] {
             assert_eq!(
                 parse_settings(&format!("theme = {value:?}")),
-                (Settings { theme }, vec![])
+                (
+                    Settings {
+                        theme,
+                        ..Settings::default()
+                    },
+                    vec![]
+                )
             );
         }
     }
@@ -202,7 +486,8 @@ mod tests {
             issues,
             vec![
                 SettingsIssue::UnknownKey("alpha".into()),
-                SettingsIssue::UnknownKey("window".into()),
+                SettingsIssue::UnknownKey("window.extra".into()),
+                SettingsIssue::UnknownKey("window.theme".into()),
                 SettingsIssue::UnknownKey("zebra".into())
             ]
         );
@@ -295,7 +580,8 @@ mod tests {
             load_settings(&fixture.path()),
             (
                 Settings {
-                    theme: ThemeSetting::Dark
+                    theme: ThemeSetting::Dark,
+                    ..Settings::default()
                 },
                 vec![]
             )
@@ -318,7 +604,8 @@ mod tests {
             load_settings(&fixture.path()),
             (
                 Settings {
-                    theme: ThemeSetting::Light
+                    theme: ThemeSetting::Light,
+                    ..Settings::default()
                 },
                 vec![]
             )
@@ -349,6 +636,35 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("unknown setting: extra"));
         assert!(warnings[0].starts_with(&fixture.path().display().to_string()));
+    }
+    #[test]
+    fn loaded_window_issues_name_the_field_and_its_fallback() {
+        let fixture = Fixture::new();
+        for (text, messages) in [
+            (
+                "window = 1",
+                vec!["window must be a table; using default window settings"],
+            ),
+            (
+                "[window]\nwidth = 0\nheight = +1000\nfoo = true",
+                vec![
+                "unknown setting: window.foo",
+                "window.height must use ASCII digits only and be from 1 to 4294967295; using 600",
+                "window.width must use ASCII digits only and be from 1 to 4294967295; using 800",
+            ],
+            ),
+        ] {
+            std::fs::write(fixture.path(), text).unwrap();
+            let (settings, warnings) = load_settings(&fixture.path());
+            assert_eq!(settings, Settings::default());
+            assert_eq!(
+                warnings,
+                messages
+                    .into_iter()
+                    .map(|message| format!("{}: {message}", fixture.path().display()))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
     #[test]
     fn theme_settings_map_to_native_appearance_preferences() {
