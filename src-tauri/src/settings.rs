@@ -82,6 +82,61 @@ fn line_column(text: &str, offset: usize) -> (usize, usize) {
     (line, column)
 }
 
+const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
+
+pub(crate) fn load_settings(path: &Path) -> (Settings, Vec<String>) {
+    match crate::read_limited_utf8(path, MAX_SETTINGS_BYTES) {
+        Err(crate::ReadError::Access(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            if std::fs::symlink_metadata(path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                (
+                    Settings::default(),
+                    vec![format!(
+                        "{}: cannot read symbolic link target",
+                        path.display()
+                    )],
+                )
+            } else {
+                (Settings::default(), vec![])
+            }
+        }
+        Err(error) => {
+            let message = match error {
+                crate::ReadError::TooLarge(limit) => {
+                    format!("file is too large (max {} KiB)", limit / 1024)
+                }
+                crate::ReadError::NotRegular => "not a regular file".into(),
+                crate::ReadError::InvalidUtf8 => "file is not valid UTF-8".into(),
+                crate::ReadError::Access(error) | crate::ReadError::Read(error) => {
+                    error.to_string()
+                }
+            };
+            (
+                Settings::default(),
+                vec![format!("{}: {message}", path.display())],
+            )
+        }
+        Ok(text) => {
+            let (settings, issues) = parse_settings(&text);
+            let warnings = issues
+                .into_iter()
+                .map(|issue| {
+                    let message = match issue {
+                        SettingsIssue::InvalidTheme => {
+                            "invalid theme; expected system, light, or dark".into()
+                        }
+                        SettingsIssue::UnknownKey(key) => format!("unknown setting: {key}"),
+                        SettingsIssue::Syntax(message) => format!("invalid TOML: {message}"),
+                    };
+                    format!("{}: {message}", path.display())
+                })
+                .collect();
+            (settings, warnings)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +216,128 @@ mod tests {
             assert!(message.contains("line 2"), "{message}");
             assert!(!message.chars().any(char::is_control));
         }
+    }
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "mjp-settings-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> PathBuf {
+            self.0.join("config.toml")
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_config_is_silent_but_a_dangling_leaf_link_is_reported() {
+        let fixture = Fixture::new();
+        assert_eq!(
+            load_settings(&fixture.path()),
+            (Settings::default(), vec![])
+        );
+        std::os::unix::fs::symlink(fixture.0.join("missing"), fixture.path()).unwrap();
+        let (settings, warnings) = load_settings(&fixture.path());
+        assert_eq!(settings, Settings::default());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("symbolic link"));
+        assert!(warnings[0].contains(&fixture.path().display().to_string()));
+        let parent_link = fixture.0.join("parent");
+        std::os::unix::fs::symlink(fixture.0.join("absent"), &parent_link).unwrap();
+        assert!(load_settings(&parent_link.join("config.toml")).1.is_empty());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_nonregular_and_invalid_utf8_config_each_report_one_warning() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = Fixture::new();
+        let path = fixture.path();
+        std::fs::create_dir(&path).unwrap();
+        assert_eq!(load_settings(&path).1.len(), 1);
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, [0xff]).unwrap();
+        assert_eq!(load_settings(&path).1.len(), 1);
+        std::fs::write(&path, "theme = \"dark\"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+        let result = load_settings(&path);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(result.0, Settings::default());
+        assert_eq!(result.1.len(), 1);
+        assert!(result.1[0].contains(&path.display().to_string()));
+    }
+    #[test]
+    fn config_accepts_exactly_64_kib_and_reports_the_limit_beyond_it() {
+        let fixture = Fixture::new();
+        let mut text = String::from("theme = \"dark\"\n");
+        text.extend(std::iter::repeat_n(' ', 65536 - text.len()));
+        std::fs::write(fixture.path(), &text).unwrap();
+        assert_eq!(
+            load_settings(&fixture.path()),
+            (
+                Settings {
+                    theme: ThemeSetting::Dark
+                },
+                vec![]
+            )
+        );
+        std::fs::write(fixture.path(), format!("{text} ")).unwrap();
+        let (settings, warnings) = load_settings(&fixture.path());
+        assert_eq!(settings, Settings::default());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("max 64 KiB"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn config_follows_regular_file_links_and_rejects_fifo_without_blocking() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::mpsc, time::Duration};
+        let fixture = Fixture::new();
+        let target = fixture.0.join("target");
+        std::fs::write(&target, "theme = \"light\"").unwrap();
+        std::os::unix::fs::symlink(&target, fixture.path()).unwrap();
+        assert_eq!(
+            load_settings(&fixture.path()),
+            (
+                Settings {
+                    theme: ThemeSetting::Light
+                },
+                vec![]
+            )
+        );
+        std::fs::remove_file(fixture.path()).unwrap();
+        let fifo = CString::new(fixture.path().as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let path = fixture.path();
+        let (sender, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = sender.send(load_settings(&path));
+        });
+        let (settings, warnings) = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("reading config FIFO blocked");
+        worker.join().unwrap();
+        assert_eq!(settings, Settings::default());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("regular file"));
+    }
+
+    #[test]
+    fn loaded_parse_issues_include_the_path_and_keep_valid_settings() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.path(), "theme = \"dark\"\nextra = true").unwrap();
+        let (settings, warnings) = load_settings(&fixture.path());
+        assert_eq!(settings.theme, ThemeSetting::Dark);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("unknown setting: extra"));
+        assert!(warnings[0].starts_with(&fixture.path().display().to_string()));
     }
 }
