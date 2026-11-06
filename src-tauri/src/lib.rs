@@ -87,10 +87,44 @@ pub struct Snapshot {
 }
 
 #[derive(Debug)]
+struct DocumentState {
+    text: String,
+    error: Option<String>,
+    warnings: Vec<String>,
+    revision: u64,
+}
+
+const MAX_WARNING_CHARS: usize = 200;
+
+fn warning_summary(warnings: &[String]) -> Option<String> {
+    if warnings.is_empty() {
+        return None;
+    }
+    let mut message = warnings
+        .iter()
+        .take(3)
+        .map(|warning| {
+            let mut characters = warning.chars().filter(|c| !c.is_control());
+            let mut message: String = characters.by_ref().take(MAX_WARNING_CHARS).collect();
+            if characters.next().is_some() {
+                message.pop();
+                message.push('…');
+            }
+            message
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+    if warnings.len() > 3 {
+        message.push_str(&format!(" (+{} more)", warnings.len() - 3));
+    }
+    Some(message)
+}
+
+#[derive(Debug)]
 pub struct Document {
     path: Option<PathBuf>,
     images: Option<Arc<images::ImageScope>>,
-    snapshot: Mutex<Snapshot>,
+    snapshot: Mutex<DocumentState>,
 }
 
 impl Document {
@@ -118,7 +152,12 @@ impl Document {
     fn snapshot(&self) -> Result<Snapshot, String> {
         self.snapshot
             .lock()
-            .map(|snapshot| snapshot.clone())
+            .map(|snapshot| Snapshot {
+                text: snapshot.text.clone(),
+                error: snapshot.error.clone(),
+                warning: warning_summary(&snapshot.warnings),
+                revision: snapshot.revision,
+            })
             .map_err(|_| "document state is unavailable".into())
     }
 
@@ -152,9 +191,9 @@ impl Document {
         Some(snapshot.revision)
     }
 
-    fn set_warning(&self, warning: String) {
+    fn add_warning(&self, warning: String) {
         if let Ok(mut snapshot) = self.snapshot.lock() {
-            snapshot.warning = Some(warning);
+            snapshot.warnings.push(warning);
             snapshot.revision += 1;
         }
     }
@@ -207,10 +246,10 @@ fn load_document_path(path: &Path) -> Result<Document, DocumentLoadError> {
     Ok(Document {
         images: images::ImageScope::new(&path).ok().map(Arc::new),
         path: Some(path),
-        snapshot: Mutex::new(Snapshot {
+        snapshot: Mutex::new(DocumentState {
             text,
             error: None,
-            warning: None,
+            warnings: Vec::new(),
             revision: 0,
         }),
     })
@@ -229,10 +268,10 @@ pub fn load_stdin(input: impl Read) -> Result<Document, String> {
     Ok(Document {
         path: None,
         images: None,
-        snapshot: Mutex::new(Snapshot {
+        snapshot: Mutex::new(DocumentState {
             text,
             error: None,
-            warning: None,
+            warnings: Vec::new(),
             revision: 0,
         }),
     })
@@ -573,5 +612,90 @@ mod tests {
         let snapshot = document.snapshot().unwrap();
         assert_eq!(snapshot.text, "before");
         assert!(snapshot.error.as_deref().unwrap().contains("regular file"));
+    }
+    #[test]
+    fn warnings_preserve_order_bound_visible_count_and_advance_revision() {
+        let document = load_stdin("text".as_bytes()).unwrap();
+        assert_eq!(document.snapshot().unwrap().warning, None);
+        for (index, warning) in [
+            "first\nline\t",
+            "second\r",
+            "third\u{1b}",
+            "fourth",
+            "fifth",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            document.add_warning(warning.into());
+            let snapshot = document.snapshot().unwrap();
+            assert_eq!(snapshot.revision, index as u64 + 1);
+            let expected = match index {
+                0 => "firstline",
+                1 => "firstline / second",
+                2 => "firstline / second / third",
+                3 => "firstline / second / third (+1 more)",
+                _ => "firstline / second / third (+2 more)",
+            };
+            assert_eq!(snapshot.warning.as_deref(), Some(expected));
+        }
+    }
+    #[test]
+    fn long_unknown_key_warnings_are_limited_without_splitting_unicode() {
+        let key = "長い キー ".repeat(100);
+        let (_, issues) = settings::parse_settings(&format!("{key:?} = true"));
+        let settings::SettingsIssue::UnknownKey(key) = &issues[0] else {
+            panic!("expected unknown key")
+        };
+        let document = load_stdin("".as_bytes()).unwrap();
+        document.add_warning(format!("unknown setting: {key}"));
+        let warning = document.snapshot().unwrap().warning.unwrap();
+        assert_eq!(warning.chars().count(), 200);
+        assert!(warning.ends_with('…'));
+        assert!(format!("unknown setting: {key}").starts_with(warning.trim_end_matches('…')));
+        for length in [199, 200, 201] {
+            let warning = warning_summary(&["あ".repeat(length)]).unwrap();
+            assert_eq!(warning.chars().count(), length.min(200));
+            assert_eq!(warning.ends_with('…'), length > 200);
+        }
+    }
+    #[test]
+    fn live_reload_warning_stays_visible_before_many_settings_warnings() {
+        let document = load_stdin("".as_bytes()).unwrap();
+        document.add_warning("Live reload is unavailable: fixture".into());
+        let (_, issues) = settings::parse_settings("d = 1\nc = 1\nb = 1\na = 1");
+        for issue in issues {
+            let settings::SettingsIssue::UnknownKey(key) = issue else {
+                panic!("expected unknown key")
+            };
+            document.add_warning(format!("unknown setting: {key}"));
+        }
+        let snapshot = document.snapshot().unwrap();
+        assert_eq!(snapshot.revision, 5);
+        assert_eq!(snapshot.warning.as_deref(), Some("Live reload is unavailable: fixture / unknown setting: a / unknown setting: b (+2 more)"));
+    }
+
+    #[test]
+    fn warnings_survive_a_read_error_and_recovery_with_unchanged_text() {
+        let path = std::env::temp_dir().join(format!(
+            "mjp-warnings-{}-{:?}.md",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::write(&path, "before").unwrap();
+        let document = load(&path).unwrap();
+        document.add_warning("first".into());
+        document.add_warning("second".into());
+        fs::remove_file(&path).unwrap();
+        assert_eq!(document.refresh(), Some(3));
+        let failed = document.snapshot().unwrap();
+        assert!(failed.error.is_some());
+        assert_eq!(failed.warning.as_deref(), Some("first / second"));
+        fs::write(&path, "before").unwrap();
+        assert_eq!(document.refresh(), Some(4));
+        let recovered = document.snapshot().unwrap();
+        assert_eq!(recovered.error, None);
+        assert_eq!(recovered.warning.as_deref(), Some("first / second"));
+        fs::remove_file(path).unwrap();
     }
 }

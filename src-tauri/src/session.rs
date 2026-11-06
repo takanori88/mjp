@@ -11,7 +11,7 @@ use crate::{
     navigation,
     open_requests::{self, Failures, OpenDecision, Origin, Requests, WindowKind},
     settings::{self, Settings},
-    watch, Document, Snapshot,
+    watch, Document, DocumentState,
 };
 
 struct PreviewSettings {
@@ -32,10 +32,10 @@ fn guidance(text: String) -> Document {
     Document {
         path: None,
         images: None,
-        snapshot: Mutex::new(Snapshot {
+        snapshot: Mutex::new(DocumentState {
             text,
             error: None,
-            warning: None,
+            warnings: Vec::new(),
             revision: 0,
         }),
     }
@@ -57,8 +57,11 @@ fn create_preview(
         if let Some(path) = document.path.clone() {
             match watch::start(app.clone(), label.into(), Arc::clone(&document), path) {
                 Ok(watcher) => documents.attach_watcher(label, watcher),
-                Err(error) => document.set_warning(format!("Live reload is unavailable: {error}")),
+                Err(error) => document.add_warning(format!("Live reload is unavailable: {error}")),
             }
+        }
+        for warning in &app.state::<PreviewSettings>().warnings {
+            document.add_warning(warning.clone());
         }
         let dev_url = app.config().build.dev_url.clone();
         let mut config = app.config().app.windows[0].clone();
