@@ -27,23 +27,27 @@ const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
 enum ReadError {
     Access(io::Error),
     NotRegular,
-    TooLarge,
+    TooLarge(u64),
     InvalidUtf8,
     Read(io::Error),
 }
 
-impl fmt::Display for ReadError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Access(error) | Self::Read(error) => error.fmt(formatter),
-            Self::NotRegular => formatter.write_str("not a regular file"),
-            Self::TooLarge => formatter.write_str("file is too large (max 10 MiB)"),
-            Self::InvalidUtf8 => formatter.write_str("file is not valid UTF-8"),
+fn markdown_read_error(error: &ReadError) -> String {
+    match error {
+        ReadError::Access(error) | ReadError::Read(error) => error.to_string(),
+        ReadError::NotRegular => "not a regular file".into(),
+        ReadError::TooLarge(limit) => {
+            format!("file is too large (max {} MiB)", limit / (1024 * 1024))
         }
+        ReadError::InvalidUtf8 => "file is not valid UTF-8".into(),
     }
 }
 
 fn read_markdown(path: &Path) -> Result<String, ReadError> {
+    read_limited_utf8(path, MAX_DOCUMENT_BYTES)
+}
+
+fn read_limited_utf8(path: &Path, limit: u64) -> Result<String, ReadError> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -59,17 +63,17 @@ fn read_markdown(path: &Path) -> Result<String, ReadError> {
     if !metadata.is_file() {
         return Err(ReadError::NotRegular);
     }
-    if metadata.len() > MAX_DOCUMENT_BYTES {
-        return Err(ReadError::TooLarge);
+    if metadata.len() > limit {
+        return Err(ReadError::TooLarge(limit));
     }
 
-    let capacity = usize::try_from(metadata.len()).map_err(|_| ReadError::TooLarge)?;
+    let capacity = usize::try_from(metadata.len()).map_err(|_| ReadError::TooLarge(limit))?;
     let mut bytes = Vec::with_capacity(capacity);
-    file.take(MAX_DOCUMENT_BYTES + 1)
+    file.take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(ReadError::Read)?;
-    if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-        return Err(ReadError::TooLarge);
+    if bytes.len() as u64 > limit {
+        return Err(ReadError::TooLarge(limit));
     }
     String::from_utf8(bytes).map_err(|_| ReadError::InvalidUtf8)
 }
@@ -136,7 +140,7 @@ impl Document {
                 snapshot.error = None;
             }
             Err(error) => {
-                let message = format!("Cannot read file: {error}");
+                let message = format!("Cannot read file: {}", markdown_read_error(&error));
                 if snapshot.error.as_deref() == Some(message.as_str()) {
                     return None;
                 }
@@ -192,7 +196,7 @@ fn load_document_path(path: &Path) -> Result<Document, DocumentLoadError> {
             }
             ReadError::Access(error) => format!("cannot access file: {error}"),
             ReadError::Read(error) => format!("cannot read file: {error}"),
-            error => error.to_string(),
+            error => markdown_read_error(&error),
         },
     })?;
     let path = fs::canonicalize(path).map_err(|error| DocumentLoadError {
