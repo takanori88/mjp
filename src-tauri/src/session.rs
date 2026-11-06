@@ -407,18 +407,22 @@ mod tests {
                 WindowSettings {
                     width: Some(1),
                     height: None,
+                    ..WindowSettings::default()
                 },
                 WindowSettings {
                     width: None,
                     height: Some(u32::MAX),
+                    ..WindowSettings::default()
                 },
                 WindowSettings {
                     width: Some(800),
                     height: None,
+                    ..WindowSettings::default()
                 },
                 WindowSettings {
                     width: None,
                     height: Some(600),
+                    ..WindowSettings::default()
                 },
             ] {
                 let config = window_config(&template, "preview-2", &window);
@@ -446,6 +450,7 @@ mod tests {
             &WindowSettings {
                 width: Some(u32::MAX),
                 height: Some(1),
+                ..WindowSettings::default()
             },
         );
         let mut expected = original.clone();

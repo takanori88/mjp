@@ -27,10 +27,18 @@ impl ThemeSetting {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowPosition {
+    TopRight,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct WindowSettings {
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub position: Option<WindowPosition>,
+    pub margin_x: Option<u32>,
+    pub margin_y: Option<u32>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -43,7 +51,9 @@ pub(crate) struct Settings {
 pub(crate) enum SettingsIssue {
     InvalidTheme,
     InvalidWindow,
+    InvalidWindowPosition,
     InvalidWindowDimension(&'static str),
+    InvalidWindowMargin(&'static str),
     UnknownKey(String),
     Syntax(String),
 }
@@ -86,9 +96,22 @@ pub(crate) fn parse_settings(text: &str) -> (Settings, Vec<SettingsIssue>) {
         } else if key.get_ref() == "window" {
             if let Some(window) = value.get_ref().as_table() {
                 for (key, value) in window.iter() {
-                    let (name, dimension) = match key.get_ref().as_ref() {
-                        "width" => ("width", &mut settings.window.width),
-                        "height" => ("height", &mut settings.window.height),
+                    if key.get_ref() == "position" {
+                        settings.window.position = value
+                            .get_ref()
+                            .as_str()
+                            .filter(|value| *value == "top-right")
+                            .map(|_| WindowPosition::TopRight);
+                        if settings.window.position.is_none() {
+                            issues.push(SettingsIssue::InvalidWindowPosition);
+                        }
+                        continue;
+                    }
+                    let (name, dimension, minimum) = match key.get_ref().as_ref() {
+                        "width" => ("width", &mut settings.window.width, 1),
+                        "height" => ("height", &mut settings.window.height, 1),
+                        "margin_x" => ("margin_x", &mut settings.window.margin_x, 0),
+                        "margin_y" => ("margin_y", &mut settings.window.margin_y, 0),
                         _ => {
                             issues.push(SettingsIssue::UnknownKey(format!(
                                 "window.{}",
@@ -100,11 +123,15 @@ pub(crate) fn parse_settings(text: &str) -> (Settings, Vec<SettingsIssue>) {
                     if matches!(value.get_ref(), toml::de::DeValue::Integer(_)) {
                         let raw = &text[value.span()];
                         if !raw.is_empty() && raw.bytes().all(|byte| byte.is_ascii_digit()) {
-                            *dimension = raw.parse().ok().filter(|value| *value != 0);
+                            *dimension = raw.parse().ok().filter(|value| *value >= minimum);
                         }
                     }
                     if dimension.is_none() {
-                        issues.push(SettingsIssue::InvalidWindowDimension(name));
+                        issues.push(if minimum == 0 {
+                            SettingsIssue::InvalidWindowMargin(name)
+                        } else {
+                            SettingsIssue::InvalidWindowDimension(name)
+                        });
                     }
                 }
             } else {
@@ -175,9 +202,15 @@ pub(crate) fn load_settings(path: &Path) -> (Settings, Vec<String>) {
                         SettingsIssue::InvalidWindow => {
                             "window must be a table; using default window settings".into()
                         }
+                        SettingsIssue::InvalidWindowPosition => {
+                            "window.position must be top-right; using centered placement".into()
+                        }
                         SettingsIssue::InvalidWindowDimension(key) => {
                             let default = if key == "width" { 800 } else { 600 };
                             format!("window.{key} must use ASCII digits only and be from 1 to 4294967295; using {default}")
+                        }
+                        SettingsIssue::InvalidWindowMargin(key) => {
+                            format!("window.{key} must use ASCII digits only and be from 0 to 4294967295; using 16")
                         }
                         SettingsIssue::UnknownKey(key) => format!("unknown setting: {key}"),
                         SettingsIssue::Syntax(message) => format!("invalid TOML: {message}"),
@@ -213,6 +246,7 @@ mod tests {
                 WindowSettings {
                     width: Some(1000),
                     height: None,
+                    ..WindowSettings::default()
                 },
             ),
             (
@@ -220,12 +254,161 @@ mod tests {
                 WindowSettings {
                     width: None,
                     height: Some(1000),
+                    ..WindowSettings::default()
                 },
             ),
         ] {
             let (settings, issues) = parse_settings(&format!("[window]\n{key} = 1000"));
             assert_eq!(settings.window, expected);
             assert!(issues.is_empty());
+        }
+    }
+
+    #[test]
+    fn top_right_position_is_opt_in_without_warnings() {
+        let (settings, issues) = parse_settings("[window]\nposition = \"top-right\"");
+        assert_eq!(settings.window.position, Some(WindowPosition::TopRight));
+        assert!(issues.is_empty());
+        let (settings, issues) = parse_settings("");
+        assert_eq!(settings.window.position, None);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn invalid_positions_report_one_issue_and_keep_independent_settings() {
+        for value in ["\"Top-Right\"", "\"top-left\"", "1", "true"] {
+            let (settings, issues) = parse_settings(&format!(
+                "theme = \"dark\"\n[window]\nwidth = 900\nposition = {value}"
+            ));
+            assert_eq!(settings.window.position, None);
+            assert_eq!(settings.window.width, Some(900));
+            assert_eq!(settings.theme, ThemeSetting::Dark);
+            assert_eq!(issues, vec![SettingsIssue::InvalidWindowPosition]);
+        }
+    }
+
+    #[test]
+    fn margins_accept_zero_and_unsigned_decimal_u32_values_only() {
+        for key in ["margin_x", "margin_y"] {
+            for (raw, expected) in [
+                ("0", Some(0)),
+                ("16", Some(16)),
+                ("4294967295", Some(u32::MAX)),
+                ("-1", None),
+                ("+1", None),
+                ("1_0", None),
+                ("1.5", None),
+                ("\"16\"", None),
+                ("4294967296", None),
+                ("true", None),
+                ("0x10", None),
+                ("[]", None),
+                ("{}", None),
+            ] {
+                let (settings, issues) = parse_settings(&format!("[window]\n{key} = {raw}"));
+                let actual = if key == "margin_x" {
+                    settings.window.margin_x
+                } else {
+                    settings.window.margin_y
+                };
+                assert_eq!(actual, expected, "{key} = {raw}");
+                assert_eq!(
+                    issues,
+                    if expected.is_some() {
+                        vec![]
+                    } else {
+                        vec![SettingsIssue::InvalidWindowMargin(key)]
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_margins_do_not_make_zero_dimensions_valid() {
+        let (settings, issues) =
+            parse_settings("[window]\nwidth = 0\nheight = 0\nmargin_x = 0\nmargin_y = 0");
+        assert_eq!(
+            settings.window,
+            WindowSettings {
+                margin_x: Some(0),
+                margin_y: Some(0),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            issues,
+            vec![
+                SettingsIssue::InvalidWindowDimension("height"),
+                SettingsIssue::InvalidWindowDimension("width")
+            ]
+        );
+    }
+
+    #[test]
+    fn margins_without_position_are_retained_without_warnings() {
+        let (settings, issues) = parse_settings("[window]\nmargin_x = 12\nmargin_y = 34");
+        assert_eq!(
+            settings.window,
+            WindowSettings {
+                margin_x: Some(12),
+                margin_y: Some(34),
+                ..Default::default()
+            }
+        );
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn placement_fields_keep_their_meaning_in_all_table_forms() {
+        for margin in ["16", "+16", "1_6"] {
+            for body in [
+                format!("[window]\r\nposition = \"top-right\"\r\nmargin_x = {margin} # 余白\r\nmargin_y = 0"),
+                format!("window = {{ position = \"top-right\", margin_x = {margin}, margin_y = 0 }}"),
+                format!("window.position = \"top-right\"\r\nwindow.margin_x = {margin} # 余白\r\nwindow.margin_y = 0"),
+            ] {
+                let (settings, issues) = parse_settings(&format!("# 日本語\r\n{body}"));
+                assert_eq!(settings.window, WindowSettings { position: Some(WindowPosition::TopRight), margin_x: (margin == "16").then_some(16), margin_y: Some(0), ..Default::default() });
+                assert_eq!(issues, if margin == "16" { vec![] } else { vec![SettingsIssue::InvalidWindowMargin("margin_x")] }, "{body}");
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_placement_issues_keep_valid_fields_and_lexical_warning_order() {
+        let (settings, issues) = parse_settings("zebra = 1\ntheme = true\n[window]\nwidth = 900\nheight = 0\nposition = true\nmargin_y = 16\nmargin_x = -1\nextra = 1");
+        assert_eq!(
+            settings.window,
+            WindowSettings {
+                width: Some(900),
+                margin_y: Some(16),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            issues,
+            vec![
+                SettingsIssue::InvalidTheme,
+                SettingsIssue::UnknownKey("window.extra".into()),
+                SettingsIssue::InvalidWindowDimension("height"),
+                SettingsIssue::InvalidWindowMargin("margin_x"),
+                SettingsIssue::InvalidWindowPosition,
+                SettingsIssue::UnknownKey("zebra".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_placement_toml_discards_all_settings() {
+        for body in [
+            "margin_x = 01",
+            "margin_y = 1__0",
+            "position = \"top-right\"\nposition = \"top-right\"",
+        ] {
+            let (settings, issues) =
+                parse_settings(&format!("theme = \"dark\"\n[window]\nwidth = 900\n{body}"));
+            assert_eq!(settings, Settings::default());
+            assert!(matches!(issues.as_slice(), [SettingsIssue::Syntax(_)]));
         }
     }
 
@@ -238,7 +421,8 @@ mod tests {
                 settings.window,
                 WindowSettings {
                     width: Some(value),
-                    height: Some(value)
+                    height: Some(value),
+                    ..WindowSettings::default()
                 }
             );
             assert!(issues.is_empty());
@@ -257,11 +441,13 @@ mod tests {
                     WindowSettings {
                         width: None,
                         height: Some(900),
+                        ..WindowSettings::default()
                     }
                 } else {
                     WindowSettings {
                         width: Some(900),
                         height: None,
+                        ..WindowSettings::default()
                     }
                 },
                 "{key} = {value}"
@@ -292,7 +478,8 @@ mod tests {
             settings.window,
             WindowSettings {
                 width: Some(900),
-                height: Some(700)
+                height: Some(700),
+                ..WindowSettings::default()
             }
         );
         assert_eq!(issues, vec![SettingsIssue::InvalidTheme]);
@@ -330,11 +517,13 @@ mod tests {
                             WindowSettings {
                                 width: expected,
                                 height: Some(900),
+                                ..WindowSettings::default()
                             }
                         } else {
                             WindowSettings {
                                 width: Some(900),
                                 height: expected,
+                                ..WindowSettings::default()
                             }
                         },
                         "{text}"
@@ -364,6 +553,7 @@ mod tests {
                 window: WindowSettings {
                     width: Some(1000),
                     height: None,
+                    ..WindowSettings::default()
                 },
             }
         );
@@ -390,13 +580,14 @@ mod tests {
             "9223372036854775808",
             "99999999999999999999999999999999999999",
         ] {
-            let (settings, issues) = parse_settings(&format!("theme = \"dark\"\n[window]\nwidth = 1000\nheight = 700\nposition = {value}\nfont_size = 16\n[window.foo]\nwidth = 0\nextra = true"));
+            let (settings, issues) = parse_settings(&format!("theme = \"dark\"\n[window]\nwidth = 1000\nheight = 700\nplacement = {value}\nfont_size = 16\n[window.foo]\nwidth = 0\nextra = true"));
             assert_eq!(settings.theme, ThemeSetting::Dark);
             assert_eq!(
                 settings.window,
                 WindowSettings {
                     width: Some(1000),
-                    height: Some(700)
+                    height: Some(700),
+                    ..WindowSettings::default()
                 }
             );
             assert_eq!(
@@ -404,7 +595,7 @@ mod tests {
                 vec![
                     SettingsIssue::UnknownKey("window.font_size".into()),
                     SettingsIssue::UnknownKey("window.foo".into()),
-                    SettingsIssue::UnknownKey("window.position".into()),
+                    SettingsIssue::UnknownKey("window.placement".into()),
                 ]
             );
         }
