@@ -59,6 +59,20 @@ Each GUI process reads configuration once before creating its first window. Chan
 
 Configuration must be a regular UTF-8 TOML file of at most 64 KiB; symbolic links to regular files are followed. Read failures and invalid TOML use defaults with an in-window warning. An invalid `theme` uses `"system"`; unknown top-level settings produce warnings while valid settings still apply. A missing file is silent; a detected dangling link at `config.toml` produces a warning. Warnings share the status banner, with live-reload warnings first. At most three warnings are displayed, each limited to 200 characters including any `…`, followed by the omitted count. A read error temporarily takes precedence, and warnings return after recovery.
 
+### Window size configuration
+
+Set either or both initial content dimensions in the same `~/.config/mjp/config.toml` file:
+
+```toml
+[window]
+width = 1000
+height = 700
+```
+
+Dimensions use logical pixels (points on macOS), excluding the title bar. Previews open centered; an omitted or invalid width uses 800, and an omitted or invalid height uses 600. Each value must be an integer written with ASCII digits only, from `1` to `4294967295`. Signs (`+1000`), separators (`1_000`), base prefixes (`0x3e8`), floats, and strings are rejected with a warning for that field; the other dimension and theme still apply. A non-table `window` uses default dimensions with one warning. Unknown keys directly under `window` each produce a warning; unknown nested tables produce one warning without inspecting their contents. Invalid TOML, including `01` or duplicate keys, discards all settings.
+
+A valid explicit dimension enables Tauri's initial overflow prevention against the primary display's work area. The OS and display can constrain the actual content size; the entire title bar is not guaranteed to fit. Without valid explicit dimensions, the existing centered 800×600 behavior is retained. Manual resizing or moving to another display does not trigger another fit. These settings apply to document, stdin, Welcome, and failure previews, including windows added later to the same process. Restart the receiving process to use changed settings.
+
 ### Opening files from Finder
 
 After [installing the app](#installation), select a `.md` or `.markdown` file in Finder and choose **Open With → mjp**. You can also make mjp the default app using the installation steps below, then double-click files to preview them.

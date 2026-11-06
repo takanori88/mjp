@@ -3,14 +3,17 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tauri::{Manager, RunEvent};
+use tauri::{
+    utils::config::{PreventOverflowConfig, WindowConfig},
+    Manager, RunEvent,
+};
 use url::Url;
 
 use crate::{
     documents::Documents,
     navigation,
     open_requests::{self, Failures, OpenDecision, Origin, Requests, WindowKind},
-    settings::{self, Settings},
+    settings::{self, Settings, WindowSettings},
     watch, Document, DocumentState,
 };
 
@@ -41,6 +44,20 @@ fn guidance(text: String) -> Document {
     }
 }
 
+fn window_config(template: &WindowConfig, label: &str, window: &WindowSettings) -> WindowConfig {
+    let mut config = template.clone();
+    config.label = label.into();
+    if let Some(width) = window.width {
+        config.width = f64::from(width);
+    }
+    if let Some(height) = window.height {
+        config.height = f64::from(height);
+    }
+    config.prevent_overflow = (window.width.is_some() || window.height.is_some())
+        .then_some(PreventOverflowConfig::Enable(true));
+    config
+}
+
 fn create_preview(
     app: &tauri::AppHandle,
     document: Document,
@@ -64,8 +81,11 @@ fn create_preview(
             document.add_warning(warning.clone());
         }
         let dev_url = app.config().build.dev_url.clone();
-        let mut config = app.config().app.windows[0].clone();
-        config.label = label.into();
+        let config = window_config(
+            &app.config().app.windows[0],
+            label,
+            &app.state::<PreviewSettings>().settings.window,
+        );
         let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
             .title(title)
             .theme(app.state::<PreviewSettings>().settings.theme.native_theme())
@@ -347,6 +367,95 @@ pub fn run(initial: Option<Document>) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn preview_template() -> WindowConfig {
+        WindowConfig {
+            label: "preview-template".into(),
+            width: 800.0,
+            height: 600.0,
+            center: true,
+            create: false,
+            drag_drop_enabled: true,
+            resizable: false,
+            title: "Template title".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unspecified_window_dimensions_preserve_the_template_except_its_label() {
+        let template = preview_template();
+        let original = template.clone();
+        let config = window_config(&template, "preview-1", &settings::WindowSettings::default());
+        let mut expected = template.clone();
+        expected.label = "preview-1".into();
+        assert_eq!(config, expected);
+        assert_eq!(config.width, 800.0);
+        assert_eq!(config.height, 600.0);
+        assert_eq!(config.prevent_overflow, None);
+        assert_eq!(template, original);
+    }
+
+    #[test]
+    fn one_explicit_dimension_keeps_the_other_and_enables_overflow_prevention() {
+        let mut custom_template = preview_template();
+        custom_template.width = 812.5;
+        custom_template.height = 612.5;
+        for template in [preview_template(), custom_template] {
+            let original = template.clone();
+            for window in [
+                WindowSettings {
+                    width: Some(1),
+                    height: None,
+                },
+                WindowSettings {
+                    width: None,
+                    height: Some(u32::MAX),
+                },
+                WindowSettings {
+                    width: Some(800),
+                    height: None,
+                },
+                WindowSettings {
+                    width: None,
+                    height: Some(600),
+                },
+            ] {
+                let config = window_config(&template, "preview-2", &window);
+                let mut expected = template.clone();
+                expected.label = "preview-2".into();
+                expected.width = window.width.map(f64::from).unwrap_or(template.width);
+                expected.height = window.height.map(f64::from).unwrap_or(template.height);
+                expected.prevent_overflow = Some(PreventOverflowConfig::Enable(true));
+                assert_eq!(config, expected);
+                assert_eq!(template, original);
+            }
+        }
+    }
+
+    #[test]
+    fn both_explicit_dimensions_replace_only_size_label_and_overflow_preference() {
+        let mut template = preview_template();
+        template.width = 812.5;
+        template.height = 612.5;
+        template.prevent_overflow = Some(PreventOverflowConfig::Enable(false));
+        let original = template.clone();
+        let config = window_config(
+            &template,
+            "preview-3",
+            &WindowSettings {
+                width: Some(u32::MAX),
+                height: Some(1),
+            },
+        );
+        let mut expected = original.clone();
+        expected.label = "preview-3".into();
+        expected.width = 4294967295.0;
+        expected.height = 1.0;
+        expected.prevent_overflow = Some(PreventOverflowConfig::Enable(true));
+        assert_eq!(config, expected);
+        assert_eq!(template, original);
+    }
 
     #[test]
     fn guidance_has_no_path_image_scope_or_watch_target() {
