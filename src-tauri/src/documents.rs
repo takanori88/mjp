@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -16,37 +16,47 @@ struct Registry {
 
 struct Entry {
     kind: WindowKind,
+    slot: u32,
     document: Arc<Document>,
     watcher: Option<WatchHandle>,
 }
 
+fn lowest_free_slot(used: impl IntoIterator<Item = u32>) -> u32 {
+    let used: HashSet<_> = used.into_iter().collect();
+    (0..=u32::MAX)
+        .find(|slot| !used.contains(slot))
+        .expect("window slots exhausted")
+}
+
 impl Documents {
-    pub fn insert(&self, document: Arc<Document>, kind: WindowKind) -> String {
+    pub fn insert(&self, document: Arc<Document>, kind: WindowKind) -> (String, u32) {
         let mut registry = self.0.lock().expect("document registry poisoned");
         let label = format!("preview-{}", registry.next_label);
         registry.next_label = registry
             .next_label
             .checked_add(1)
             .expect("window labels exhausted");
+        let slot = lowest_free_slot(registry.entries.values().map(|entry| entry.slot));
         registry.entries.insert(
             label.clone(),
             Entry {
                 kind,
+                slot,
                 document,
                 watcher: None,
             },
         );
-        label
+        (label, slot)
     }
 
     pub fn create<E>(
         &self,
         document: Arc<Document>,
         kind: WindowKind,
-        build: impl FnOnce(&str) -> Result<(), E>,
+        build: impl FnOnce(&str, u32) -> Result<(), E>,
     ) -> Result<String, E> {
-        let label = self.insert(document, kind);
-        match build(&label) {
+        let (label, slot) = self.insert(document, kind);
+        match build(&label, slot) {
             Ok(()) => Ok(label),
             Err(error) => {
                 self.remove(&label);
@@ -114,12 +124,120 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lowest_free_slot_is_the_smallest_gap_regardless_of_iteration_order() {
+        for (used, expected) in [
+            (vec![], 0),
+            (vec![0, 1], 2),
+            (vec![0, 2], 1),
+            (vec![2, 0], 1),
+            (vec![2, 1, 0], 3),
+            (vec![u32::MAX, 0, 0], 1),
+        ] {
+            assert_eq!(lowest_free_slot(used), expected);
+        }
+    }
+
+    fn document() -> Arc<Document> {
+        Arc::new(crate::load_stdin(b"text".as_slice()).unwrap())
+    }
+
+    #[test]
+    fn entries_reserve_distinct_slots_before_building_even_without_position_settings() {
+        let documents = Documents::default();
+        let (_, slot) = documents.insert(document(), WindowKind::Document);
+        assert_eq!(slot, 0);
+        let result = documents.create(document(), WindowKind::Document, |label, slot| {
+            assert_eq!(slot, 1);
+            assert!(documents.get(label).is_ok());
+            let documents = &documents;
+            let (_, other_slot) = std::thread::scope(|scope| {
+                scope
+                    .spawn(move || documents.insert(document(), WindowKind::Failures))
+                    .join()
+                    .unwrap()
+            });
+            assert_eq!(other_slot, 2);
+            Ok::<(), ()>(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 3);
+    }
+
+    #[test]
+    fn failed_builds_release_their_slot_without_moving_other_entries() {
+        let documents = Documents::default();
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 0);
+        let mut survivor = String::new();
+        let result = documents.create(document(), WindowKind::Document, |_, slot| {
+            assert_eq!(slot, 1);
+            let (label, other_slot) = documents.insert(document(), WindowKind::Document);
+            survivor = label;
+            assert_eq!(other_slot, 2);
+            Err("build failed")
+        });
+        assert_eq!(result, Err("build failed"));
+        assert!(documents.get(&survivor).is_ok());
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 1);
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 3);
+    }
+
+    #[test]
+    fn destroyed_entries_release_slots_and_the_smallest_gap_is_reused_first() {
+        let documents = Documents::default();
+        let (first, _) = documents.insert(document(), WindowKind::Document);
+        let (middle, _) = documents.insert(document(), WindowKind::Document);
+        let (last, _) = documents.insert(document(), WindowKind::Document);
+        documents.remove(&middle);
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 1);
+        documents.remove(&last);
+        documents.remove(&first);
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 0);
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 2);
+    }
+
+    #[test]
+    fn welcome_keeps_its_slot_until_destroyed_after_a_successful_document_build() {
+        let documents = Documents::default();
+        let (welcome, slot) = documents.insert(document(), WindowKind::Welcome);
+        assert_eq!(slot, 0);
+        let failed = documents.create(document(), WindowKind::Document, |_, slot| {
+            assert_eq!(slot, 1);
+            Err("build failed")
+        });
+        assert!(!WindowKind::Document.replaces_welcome(failed.is_ok()));
+        assert_eq!(documents.labels(WindowKind::Welcome), vec![welcome.clone()]);
+        let success = documents.create(document(), WindowKind::Document, |_, slot| {
+            assert_eq!(slot, 1);
+            assert!(documents.get(&welcome).is_ok());
+            Ok::<(), ()>(())
+        });
+        assert!(WindowKind::Document.replaces_welcome(success.is_ok()));
+        assert_eq!(documents.insert(document(), WindowKind::Failures).1, 2);
+        documents.remove(&welcome);
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 0);
+    }
+
+    #[test]
+    fn focusing_an_open_document_does_not_reserve_another_slot() {
+        use crate::open_requests::{OpenDecision, Requests};
+        let documents = Documents::default();
+        let mut requests = Requests::default();
+        let path = std::path::PathBuf::from("/documents/note.md");
+        assert_eq!(requests.reserve(&path), OpenDecision::Load);
+        let (label, slot) = documents.insert(document(), WindowKind::Document);
+        assert_eq!(slot, 0);
+        requests.opened(path.clone(), label.clone());
+        assert_eq!(requests.reserve(&path), OpenDecision::Focus(label));
+        assert_eq!(documents.insert(document(), WindowKind::Document).1, 1);
+    }
+
+    #[test]
     fn each_window_reads_only_its_registered_document() {
         let documents = Documents::default();
         let first = Arc::new(crate::load_stdin("first".as_bytes()).unwrap());
         let second = Arc::new(crate::load_stdin("second".as_bytes()).unwrap());
-        let a = documents.insert(Arc::clone(&first), WindowKind::Document);
-        let b = documents.insert(Arc::clone(&second), WindowKind::Document);
+        let (a, _) = documents.insert(Arc::clone(&first), WindowKind::Document);
+        let (b, _) = documents.insert(Arc::clone(&second), WindowKind::Document);
         assert_ne!(a, b);
         assert!(Arc::ptr_eq(&documents.get(&a).unwrap(), &first));
         assert!(Arc::ptr_eq(&documents.get(&b).unwrap(), &second));
@@ -138,7 +256,7 @@ mod tests {
             let bytes = [b"\x89PNG\r\n\x1a\n".as_slice(), name.as_bytes()].concat();
             std::fs::write(dir.join("image.png"), bytes).unwrap();
             let document = crate::load_document([dir.join("note.md").into_os_string()]).unwrap();
-            labels.push(documents.insert(Arc::new(document), WindowKind::Document));
+            labels.push(documents.insert(Arc::new(document), WindowKind::Document).0);
         }
         for (label, name) in labels.iter().zip(["a", "b"]) {
             let document = documents.get(label).unwrap();
@@ -158,8 +276,8 @@ mod tests {
         let documents = Documents::default();
         let document = Arc::new(crate::load_stdin(b"a".as_slice()).unwrap());
         let weak = Arc::downgrade(&document);
-        let a = documents.insert(document, WindowKind::Document);
-        let b = documents.insert(
+        let (a, _) = documents.insert(document, WindowKind::Document);
+        let (b, _) = documents.insert(
             Arc::new(crate::load_stdin(b"b".as_slice()).unwrap()),
             WindowKind::Document,
         );
@@ -171,7 +289,7 @@ mod tests {
         documents.remove(&b);
         assert!(documents.can_exit(false));
         assert!(!documents.can_exit(true));
-        let c = documents.insert(
+        let (c, _) = documents.insert(
             Arc::new(crate::load_stdin(b"c".as_slice()).unwrap()),
             WindowKind::Document,
         );
@@ -184,7 +302,7 @@ mod tests {
         let document = Arc::new(crate::load_stdin(b"a".as_slice()).unwrap());
         let weak = Arc::downgrade(&document);
         let mut attempted = String::new();
-        let result = documents.create(document, WindowKind::Document, |label| {
+        let result = documents.create(document, WindowKind::Document, |label, _slot| {
             attempted = label.into();
             assert_eq!(documents.get(label).unwrap().snapshot().unwrap().text, "a");
             Err("build failed")
@@ -198,7 +316,7 @@ mod tests {
     #[test]
     fn welcome_is_identified_by_kind_instead_of_text_or_path() {
         let documents = Documents::default();
-        let welcome = documents.insert(
+        let (welcome, _) = documents.insert(
             Arc::new(crate::load_stdin(b"same".as_slice()).unwrap()),
             WindowKind::Welcome,
         );

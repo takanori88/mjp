@@ -103,7 +103,7 @@ fn create_preview(
     };
     let document = Arc::new(document);
     let documents = app.state::<Documents>();
-    let result = documents.create(Arc::clone(&document), kind, |label| {
+    let result = documents.create(Arc::clone(&document), kind, |label, _slot| {
         if let Some(path) = document.path.clone() {
             match watch::start(app.clone(), label.into(), Arc::clone(&document), path) {
                 Ok(watcher) => documents.attach_watcher(label, watcher),
