@@ -278,7 +278,7 @@ mod tests {
         std::fs::write(&path, [0xff]).unwrap();
         assert_eq!(load_settings(&path).1.len(), 1);
         std::fs::write(&path, "theme = \"dark\"").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
         let result = load_settings(&path);
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(result.0, Settings::default());
