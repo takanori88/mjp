@@ -359,4 +359,30 @@ mod tests {
         );
         assert_eq!(ThemeSetting::Dark.native_theme(), Some(tauri::Theme::Dark));
     }
+    #[test]
+    fn syntax_positions_count_unicode_columns_and_handle_crlf_eof_and_invalid_offsets() {
+        let text = "# 日本語\r\ntheme = \"dark\"\r\n";
+        assert_eq!(line_column(text, 0), (1, 1));
+        assert_eq!(line_column(text, text.find('本').unwrap()), (1, 4));
+        assert_eq!(line_column(text, text.find('本').unwrap() + 1), (1, 4));
+        assert_eq!(line_column(text, text.find('\r').unwrap()), (1, 6));
+        assert_eq!(line_column(text, text.find('\n').unwrap()), (1, 7));
+        assert_eq!(line_column(text, text.find("theme").unwrap()), (2, 1));
+        assert_eq!(line_column(text, text.len()), (3, 1));
+        assert_eq!(line_column(text, usize::MAX), (3, 1));
+        assert_eq!(line_column("日本語", 9), (1, 4));
+        assert_eq!(line_column("", usize::MAX), (1, 1));
+        for source in ["'日本語' = @", "# 日本語\r\nbad = @", "theme = "] {
+            let offset = source.find('@').unwrap_or(source.len());
+            let (line, column) = line_column(source, offset);
+            let (_, issues) = parse_settings(source);
+            let SettingsIssue::Syntax(message) = &issues[0] else {
+                panic!("expected syntax issue")
+            };
+            assert!(
+                message.ends_with(&format!("at line {line}, column {column}")),
+                "{message}"
+            );
+        }
+    }
 }
