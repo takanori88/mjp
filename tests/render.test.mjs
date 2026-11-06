@@ -169,3 +169,42 @@ test('shows normalized link destinations while preserving author titles', () => 
   assert.deepEqual([...article.querySelectorAll('a')].map(anchor => anchor.title),
     ['https://example.com/', 'https://example.com/path\nDetails']);
 });
+
+for (const initial of ['# Initial', '']) {
+  test(`records first rendering once with startup warnings and ${initial ? 'formatted' : 'empty'} content`, () => {
+    const frames = [];
+    const original = dom.window.requestAnimationFrame;
+    dom.window.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+    try {
+      const { stages, render } = setup();
+      render(snapshot(initial, 3, null, 'first / second / third'));
+      render(snapshot(initial, 4, null, 'warnings changed'));
+      render(snapshot('# Changed before first frame', 5));
+      while (frames.length) frames.shift()(0);
+      assert.deepEqual(stages.filter(stage => stage.endsWith('_render')), ['first_render', 'reload_render']);
+      render(snapshot('# Later', 6));
+      while (frames.length) frames.shift()(0);
+      assert.deepEqual(stages.filter(stage => stage.endsWith('_render')), ['first_render', 'reload_render', 'reload_render']);
+      const next = setup();
+      next.render(snapshot(initial, 9));
+      while (frames.length) frames.shift()(0);
+      assert.deepEqual(next.stages.filter(stage => stage.endsWith('_render')), ['first_render']);
+    } finally {
+      dom.window.requestAnimationFrame = original;
+    }
+  });
+}
+
+test('restores accumulated warnings after a read error without replacing the same content', () => {
+  const { article, status, render } = setup();
+  const warnings = 'Live reload is unavailable / Unknown setting';
+  render(snapshot('# Title', 2, null, warnings));
+  const content = article.firstChild;
+  assert.equal(status.textContent, warnings);
+  assert.equal(render(snapshot('# Title', 3, 'Cannot read file', warnings)), false);
+  assert.equal(status.textContent, 'Cannot read file');
+  assert.equal(render(snapshot('# Title', 4, null, warnings)), false);
+  assert.equal(status.textContent, warnings);
+  assert.equal(status.hidden, false);
+  assert.equal(article.firstChild, content);
+});
