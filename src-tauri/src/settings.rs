@@ -354,6 +354,26 @@ mod tests {
     }
 
     #[test]
+    fn leading_utf8_bom_preserves_window_dimension_spelling_and_theme() {
+        let (settings, issues) =
+            parse_settings("\u{feff}theme = \"dark\"\n[window]\nwidth = 1000\nheight = 1_000");
+        assert_eq!(
+            settings,
+            Settings {
+                theme: ThemeSetting::Dark,
+                window: WindowSettings {
+                    width: Some(1000),
+                    height: None,
+                },
+            }
+        );
+        assert_eq!(
+            issues,
+            vec![SettingsIssue::InvalidWindowDimension("height")]
+        );
+    }
+
+    #[test]
     fn nontable_window_reports_one_issue_and_keeps_the_theme() {
         for body in ["window = 1", "window = []", "[[window]]\nwidth = 1000"] {
             let (settings, issues) = parse_settings(&format!("theme = \"dark\"\n{body}"));
