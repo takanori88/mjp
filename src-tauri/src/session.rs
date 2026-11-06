@@ -5,7 +5,7 @@ use std::{
 };
 use tauri::{
     utils::config::{PreventOverflowConfig, WindowConfig},
-    Manager, RunEvent,
+    LogicalRect, LogicalSize, Manager, RunEvent,
 };
 use url::Url;
 
@@ -41,6 +41,39 @@ fn guidance(text: String) -> Document {
             warnings: Vec::new(),
             revision: 0,
         }),
+    }
+}
+
+fn top_right_position(
+    work_area: LogicalRect<f64, f64>,
+    size: LogicalSize<f64>,
+    margin: (u32, u32),
+    slot: u32,
+    step: f64,
+) -> (f64, f64) {
+    let sx = (work_area.size.width - size.width).max(0.0);
+    let sy = (work_area.size.height - size.height).max(0.0);
+    let ox = (sx - f64::from(margin.0)).clamp(0.0, sx);
+    let oy = f64::from(margin.1).clamp(0.0, sy);
+    let count = 1.0 + (ox.min(sy - oy) / step).floor();
+    let offset = (f64::from(slot) % count) * step;
+    (
+        work_area.position.x + ox - offset,
+        work_area.position.y + oy + offset,
+    )
+}
+
+fn expected_content_size(config: &WindowConfig, work_area: LogicalSize<f64>) -> LogicalSize<f64> {
+    if matches!(
+        config.prevent_overflow,
+        Some(PreventOverflowConfig::Enable(true))
+    ) {
+        LogicalSize::new(
+            config.width.min(work_area.width),
+            config.height.min(work_area.height),
+        )
+    } else {
+        LogicalSize::new(config.width, config.height)
     }
 }
 
@@ -379,6 +412,208 @@ mod tests {
             resizable: false,
             title: "Template title".into(),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn slot_zero_uses_the_top_right_margins_or_the_corner_for_zero() {
+        let area = LogicalRect {
+            position: (0.0, 0.0).into(),
+            size: (1440.0, 900.0).into(),
+        };
+        let size = tauri::LogicalSize::new(800.0, 600.0);
+        assert_eq!(
+            top_right_position(area, size, (16, 16), 0, 24.0),
+            (624.0, 16.0)
+        );
+        assert_eq!(
+            top_right_position(area, size, (0, 0), 0, 24.0),
+            (640.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn successive_slots_cascade_left_and_down_by_the_fixed_step() {
+        let area = LogicalRect {
+            position: (0.0, 0.0).into(),
+            size: (1440.0, 900.0).into(),
+        };
+        for slot in [1, 2, 5, 11] {
+            let offset = f64::from(slot) * 24.0;
+            assert_eq!(
+                top_right_position(area, (800.0, 600.0).into(), (16, 16), slot, 24.0),
+                (624.0 - offset, 16.0 + offset)
+            );
+        }
+    }
+
+    #[test]
+    fn cascade_wraps_by_the_number_of_fitting_positions_including_exact_boundaries() {
+        for (width, height, margin, count) in [
+            (1440.0, 900.0, (16, 16), 12),
+            (848.0, 648.0, (0, 0), 3),
+            (800.0, 600.0, (0, 0), 1),
+            (816.0, 616.0, (16, 16), 1),
+        ] {
+            let area = LogicalRect {
+                position: (0.0, 0.0).into(),
+                size: (width, height).into(),
+            };
+            let size = (800.0, 600.0).into();
+            let first = top_right_position(area, size, margin, 0, 24.0);
+            for slot in [count - 1, count, count + 1, u32::MAX] {
+                let offset = f64::from(slot % count) * 24.0;
+                assert_eq!(
+                    top_right_position(area, size, margin, slot, 24.0),
+                    (first.0 - offset, first.1 + offset)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn excessive_margins_yield_to_each_work_area_boundary() {
+        let area = LogicalRect {
+            position: (0.0, 0.0).into(),
+            size: (1440.0, 900.0).into(),
+        };
+        for (margin, expected) in [
+            ((1000, 16), (0.0, 16.0)),
+            ((16, 1000), (624.0, 300.0)),
+            ((1000, 1000), (0.0, 300.0)),
+            ((u32::MAX, u32::MAX), (0.0, 300.0)),
+        ] {
+            for slot in [0, 1, u32::MAX] {
+                assert_eq!(
+                    top_right_position(area, (800.0, 600.0).into(), margin, slot, 24.0),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oversized_or_equal_edges_align_only_the_constrained_axes() {
+        let area = LogicalRect {
+            position: (10.0, 30.0).into(),
+            size: (1440.0, 900.0).into(),
+        };
+        for (size, expected) in [
+            ((1500.0, 600.0), (10.0, 46.0)),
+            ((800.0, 1000.0), (634.0, 30.0)),
+            ((1500.0, 1000.0), (10.0, 30.0)),
+            ((1440.0, 600.0), (10.0, 46.0)),
+            ((800.0, 900.0), (634.0, 30.0)),
+            ((1440.0, 900.0), (10.0, 30.0)),
+        ] {
+            for slot in [0, 1, u32::MAX] {
+                assert_eq!(
+                    top_right_position(area, size.into(), (16, 16), slot, 24.0),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_origins_preserve_exact_step_boundaries_and_wrapping() {
+        for (width, count) in [
+            (1056.0_f64.next_down(), 10),
+            (1056.0, 11),
+            (1056.0_f64.next_up(), 11),
+        ] {
+            for origin in [(0.0, 0.0), (0.1, -10.3), (-1920.5, 23.25)] {
+                let area = LogicalRect {
+                    position: origin.into(),
+                    size: (width, 856.0).into(),
+                };
+                for slot in [count - 1, count, count + 1] {
+                    let offset = f64::from(slot % count) * 24.0;
+                    let actual =
+                        top_right_position(area, (800.0, 600.0).into(), (16, 16), slot, 24.0);
+                    let expected = (origin.0 + width - 816.0 - offset, origin.1 + 16.0 + offset);
+                    assert!(
+                        (actual.0 - expected.0).abs() < 1e-10,
+                        "{actual:?} != {expected:?}"
+                    );
+                    assert!(
+                        (actual.1 - expected.1).abs() < 1e-10,
+                        "{actual:?} != {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn work_area_origins_include_menu_bar_and_side_dock_offsets_without_inversion() {
+        for (origin, extent, expected) in [
+            ((0.0, 25.0), (1440.0, 875.0), (624.0, 41.0)),
+            ((48.0, 25.0), (1392.0, 875.0), (624.0, 41.0)),
+            ((0.0, 25.0), (1392.0, 875.0), (576.0, 41.0)),
+            ((-1440.0, -900.0), (1440.0, 900.0), (-816.0, -884.0)),
+        ] {
+            let area = LogicalRect {
+                position: origin.into(),
+                size: extent.into(),
+            };
+            assert_eq!(
+                top_right_position(area, (800.0, 600.0).into(), (16, 16), 0, 24.0),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn placement_uses_fitted_content_only_when_overflow_prevention_is_enabled() {
+        let template = preview_template();
+        for (window, area, expected) in [
+            (
+                WindowSettings {
+                    position: Some(settings::WindowPosition::TopRight),
+                    ..Default::default()
+                },
+                (640.0, 480.0),
+                (800.0, 600.0),
+            ),
+            (
+                WindowSettings {
+                    width: Some(1000),
+                    ..Default::default()
+                },
+                (640.0, 480.0),
+                (640.0, 480.0),
+            ),
+            (
+                WindowSettings {
+                    height: Some(700),
+                    ..Default::default()
+                },
+                (1440.0, 480.0),
+                (800.0, 480.0),
+            ),
+            (
+                WindowSettings {
+                    width: Some(u32::MAX),
+                    height: Some(u32::MAX),
+                    ..Default::default()
+                },
+                (1440.0, 900.0),
+                (1440.0, 900.0),
+            ),
+            (
+                WindowSettings {
+                    width: Some(800),
+                    ..Default::default()
+                },
+                (1440.0, 900.0),
+                (800.0, 600.0),
+            ),
+        ] {
+            let config = window_config(&template, "preview-size", &window);
+            assert_eq!(expected_content_size(&config, area.into()), expected.into());
+            assert_eq!(config.width, window.width.map(f64::from).unwrap_or(800.0));
+            assert_eq!(config.height, window.height.map(f64::from).unwrap_or(600.0));
         }
     }
 
