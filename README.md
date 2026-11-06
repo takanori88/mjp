@@ -20,7 +20,7 @@ mjp README.md
 - Copies fenced code blocks with a button or keyboard activation.
 - Displays local PNG, JPEG, GIF, and WebP images referenced in Markdown.
 - Searches within the displayed document in Markdown and plain-text views.
-- Follows the system light or dark appearance.
+- Follows the system appearance, with an optional fixed light or dark theme.
 - Reloads the preview when the file changes, preserving the scroll position when possible.
 - Supports keyboard navigation and quick closing.
 - Returns the shell prompt immediately after opening the window in a macOS release build.
@@ -42,6 +42,22 @@ Running `mjp` with no arguments at a terminal shows help. `mjp -` at a terminal 
 Documents up to 128 KiB are formatted as Markdown. Larger documents show their complete source as plain text, with a notice, to keep initial display quick. File previews support live reload in both modes.
 
 Links with `http:`, `https:`, or `mailto:` URLs open in the system's default app. Relative file links are not opened. Raw HTML remains plain text.
+
+### Theme configuration
+
+Create `~/.config/mjp/config.toml` to fix the appearance of all previews in a process:
+
+```toml
+theme = "dark"
+```
+
+Use `"light"` or `"dark"` for a fixed appearance. `"system"`, an omitted `theme`, or a missing file follows the OS appearance, including changes while mjp is running. Values are case-sensitive. There is no `--theme` CLI option or settings UI.
+
+The location is fixed at `$HOME/.config/mjp/config.toml`; mjp does not use `XDG_CONFIG_HOME` and does not follow the XDG configuration specification. This gives terminal and Finder launches the same location when they have the same `HOME`. Changing `HOME` in a terminal selects a different location. An unset, empty, or relative `HOME` disables configuration silently.
+
+Each GUI process reads configuration once before creating its first window. Changes apply only to a new process: windows added to an existing process, including Finder requests, keep its original settings. Quit the receiving app before relaunching to use changed settings.
+
+Configuration must be a regular UTF-8 TOML file of at most 64 KiB; symbolic links to regular files are followed. Read failures and invalid TOML use defaults with an in-window warning. An invalid `theme` uses `"system"`; unknown top-level settings produce warnings while valid settings still apply. A missing file is silent; a detected dangling link at `config.toml` produces a warning. Warnings share the status banner, with live-reload warnings first. At most three warnings are displayed, each limited to 200 characters including any `…`, followed by the omitted count. A read error temporarily takes precedence, and warnings return after recovery.
 
 ### Opening files from Finder
 
