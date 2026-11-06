@@ -76,6 +76,7 @@ export function createDocumentRenderer(
     status.textContent = message ?? "";
 
     if (snapshot.text === lastText) return false;
+    const stage = lastText === null ? "first_render" : "reload_render";
     disposeImages();
     disposeCopyButtons();
     const scrollY = view.scrollY;
@@ -123,7 +124,6 @@ export function createDocumentRenderer(
     view.scrollTo(0, scrollY);
 
     if (mark) {
-      const stage = snapshot.revision === 0 ? "first_render" : "reload_render";
       view.requestAnimationFrame(() => view.requestAnimationFrame(() => mark(stage)));
     }
     return true;

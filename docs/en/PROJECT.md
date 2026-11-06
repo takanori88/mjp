@@ -133,7 +133,7 @@ def hello():
 
 ### Theme
 
-Follow the OS light and dark appearance automatically. Use GitHub Markdown and VS Code Markdown Preview as references for readability, including type, spacing, and code styling. Do not copy another product's CSS wholesale.
+Follow the OS light and dark appearance automatically by default. A fixed light or dark appearance is now available through `~/.config/mjp/config.toml`; see [theme configuration](../../README.md#theme-configuration). Use GitHub Markdown and VS Code Markdown Preview as references for readability, including type, spacing, and code styling. Do not copy another product's CSS wholesale.
 
 ### Live reload
 
@@ -229,7 +229,7 @@ git show HEAD:README.md | mjp
 mjp -
 ```
 
-The theme override remains a future idea. Standard input is read once to EOF. See [README.md](../../README.md) for current limits and behavior.
+The CLI `--theme` override remains a future idea; the configuration-file override is implemented. Standard input is read once to EOF. See [README.md](../../README.md) for current limits and behavior.
 
 ## 13. Cross-platform scope
 

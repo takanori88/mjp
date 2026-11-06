@@ -266,7 +266,7 @@ def hello():
 
 ## Theme
 
-OSのLight / Dark modeに自動追従する。
+既定ではOSのLight / Dark modeに自動追従する。現在は `~/.config/mjp/config.toml` によるライト／ダーク固定にも対応している。[テーマ設定](README.md#テーマ設定) を参照。
 
 基本デザインは、
 
@@ -495,7 +495,7 @@ cat README.md | mjp
 git show HEAD:README.md | mjp
 ```
 
-現在は単発の標準入力に対応し、上記のパイプ入力を EOF まで一度だけ読み込んで表示する。`mjp -` でも明示的に標準入力を選べる。テーマ指定は引き続き今後の候補とする。現在の上限や動作は [README.md](README.md) を参照。
+現在は単発の標準入力に対応し、上記のパイプ入力を EOF まで一度だけ読み込んで表示する。`mjp -` でも明示的に標準入力を選べる。CLI の `--theme` は引き続き今後の候補とし、設定ファイルによるテーマの上書きは実装済みである。現在の上限や動作は [README.md](README.md) を参照。
 
 ---
 

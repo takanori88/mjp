@@ -305,7 +305,7 @@ mod tests {
             receiver,
             PathBuf::from("selected.md"),
             move || {
-                document.set_warning("changed".into());
+                document.add_warning("changed".into());
             },
         )
         .unwrap();
@@ -324,7 +324,7 @@ mod tests {
             receiver,
             PathBuf::from("selected.md"),
             move || {
-                worker_document.set_warning("changed".into());
+                worker_document.add_warning("changed".into());
             },
         )
         .unwrap();
