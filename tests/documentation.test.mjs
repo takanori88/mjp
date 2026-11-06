@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const documents = [
   'README.md', 'docs/ja/README.md',
+  'docs/en/CONFIGURATION.md', 'docs/ja/CONFIGURATION.md',
   'docs/en/PLAN.md', 'docs/ja/PLAN.md',
   'docs/en/PROJECT.md', 'docs/ja/PROJECT.md',
 ];
