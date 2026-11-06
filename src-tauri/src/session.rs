@@ -10,8 +10,14 @@ use crate::{
     documents::Documents,
     navigation,
     open_requests::{self, Failures, OpenDecision, Origin, Requests, WindowKind},
+    settings::{self, Settings},
     watch, Document, Snapshot,
 };
+
+struct PreviewSettings {
+    settings: Settings,
+    warnings: Vec<String>,
+}
 
 #[derive(Default)]
 struct Session(Mutex<Requests>);
@@ -59,6 +65,7 @@ fn create_preview(
         config.label = label.into();
         let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
             .title(title)
+            .theme(app.state::<PreviewSettings>().settings.theme.native_theme())
             .on_navigation(move |url| navigation::allows_navigation(url, dev_url.as_ref()))
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .build()?;
@@ -238,10 +245,14 @@ fn finish_batch(app: &tauri::AppHandle, failures: Failures) {
 
 pub fn run(initial: Option<Document>) -> tauri::Result<()> {
     let app_mode = initial.is_none();
+    let (settings, warnings) = settings::config_path(std::env::var_os("HOME").as_deref())
+        .map(|path| settings::load_settings(&path))
+        .unwrap_or_default();
     #[cfg(feature = "perf")]
     crate::perf::mark_now("gui_run");
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(PreviewSettings { settings, warnings })
         .manage(Documents::default())
         .manage(Session::default());
     #[cfg(feature = "perf")]

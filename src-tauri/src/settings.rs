@@ -17,6 +17,16 @@ pub(crate) enum ThemeSetting {
     Dark,
 }
 
+impl ThemeSetting {
+    pub(crate) fn native_theme(self) -> Option<tauri::Theme> {
+        match self {
+            Self::System => None,
+            Self::Light => Some(tauri::Theme::Light),
+            Self::Dark => Some(tauri::Theme::Dark),
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Settings {
     pub theme: ThemeSetting,
@@ -339,5 +349,14 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("unknown setting: extra"));
         assert!(warnings[0].starts_with(&fixture.path().display().to_string()));
+    }
+    #[test]
+    fn theme_settings_map_to_native_appearance_preferences() {
+        assert_eq!(ThemeSetting::System.native_theme(), None);
+        assert_eq!(
+            ThemeSetting::Light.native_theme(),
+            Some(tauri::Theme::Light)
+        );
+        assert_eq!(ThemeSetting::Dark.native_theme(), Some(tauri::Theme::Dark));
     }
 }
