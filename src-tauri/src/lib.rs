@@ -18,6 +18,7 @@ mod open_requests;
 #[cfg(feature = "perf")]
 pub mod perf;
 mod session;
+mod settings;
 mod watch;
 
 const MAX_DOCUMENT_BYTES: u64 = 10 * 1024 * 1024;
