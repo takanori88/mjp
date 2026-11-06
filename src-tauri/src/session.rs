@@ -105,6 +105,7 @@ fn window_config(
 ) -> WindowConfig {
     let mut config = template.clone();
     config.label = label.into();
+    config.always_on_top = window.always_on_top;
     if let Some(width) = window.width {
         config.width = f64::from(width);
     }
@@ -454,6 +455,54 @@ mod tests {
             resizable: false,
             title: "Template title".into(),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn always_on_top_follows_settings_without_changing_other_window_preferences_or_template() {
+        for template_value in [false, true] {
+            for setting_value in [false, true] {
+                for all_workspaces in [false, true] {
+                    let template = WindowConfig {
+                        always_on_top: template_value,
+                        visible_on_all_workspaces: all_workspaces,
+                        x: Some(12.5),
+                        y: Some(24.5),
+                        ..preview_template()
+                    };
+                    let original = template.clone();
+                    for dimensions in [None, Some((1000, 700))] {
+                        let window = WindowSettings {
+                            always_on_top: setting_value,
+                            width: dimensions.map(|size| size.0),
+                            height: dimensions.map(|size| size.1),
+                            ..Default::default()
+                        };
+                        for position in [None, Some((624.5, 41.25))] {
+                            let mut expected = original.clone();
+                            expected.label = "preview-top".into();
+                            expected.always_on_top = setting_value;
+                            if let Some((width, height)) = dimensions {
+                                expected.width = f64::from(width);
+                                expected.height = f64::from(height);
+                                expected.prevent_overflow =
+                                    Some(PreventOverflowConfig::Enable(true));
+                            }
+                            if let Some((x, y)) = position {
+                                expected.x = Some(x);
+                                expected.y = Some(y);
+                                expected.center = false;
+                            }
+                            assert_eq!(
+                                window_config(&template, "preview-top", &window, position),
+                                expected,
+                                "template={template_value}, setting={setting_value}, all_workspaces={all_workspaces}, dimensions={dimensions:?}, position={position:?}"
+                            );
+                            assert_eq!(template, original);
+                        }
+                    }
+                }
+            }
         }
     }
 

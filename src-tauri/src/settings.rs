@@ -34,6 +34,7 @@ pub(crate) enum WindowPosition {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct WindowSettings {
+    pub always_on_top: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub position: Option<WindowPosition>,
@@ -51,6 +52,7 @@ pub(crate) struct Settings {
 pub(crate) enum SettingsIssue {
     InvalidTheme,
     InvalidWindow,
+    InvalidWindowAlwaysOnTop,
     InvalidWindowPosition,
     InvalidWindowDimension(&'static str),
     InvalidWindowMargin(&'static str),
@@ -96,6 +98,14 @@ pub(crate) fn parse_settings(text: &str) -> (Settings, Vec<SettingsIssue>) {
         } else if key.get_ref() == "window" {
             if let Some(window) = value.get_ref().as_table() {
                 for (key, value) in window.iter() {
+                    if key.get_ref() == "always_on_top" {
+                        if let toml::de::DeValue::Boolean(value) = value.get_ref() {
+                            settings.window.always_on_top = *value;
+                        } else {
+                            issues.push(SettingsIssue::InvalidWindowAlwaysOnTop);
+                        }
+                        continue;
+                    }
                     if key.get_ref() == "position" {
                         settings.window.position = value
                             .get_ref()
@@ -202,6 +212,9 @@ pub(crate) fn load_settings(path: &Path) -> (Settings, Vec<String>) {
                         SettingsIssue::InvalidWindow => {
                             "window must be a table; using default window settings".into()
                         }
+                        SettingsIssue::InvalidWindowAlwaysOnTop => {
+                            "window.always_on_top must be true or false; using false".into()
+                        }
                         SettingsIssue::InvalidWindowPosition => {
                             "window.position must be top-right; using centered placement".into()
                         }
@@ -227,6 +240,157 @@ pub(crate) fn load_settings(path: &Path) -> (Settings, Vec<String>) {
 mod tests {
     use super::*;
     use std::{ffi::OsStr, path::PathBuf};
+
+    #[test]
+    fn omitted_always_on_top_is_false_without_issues() {
+        for text in ["", "theme = \"dark\"", "[window]", "window = {}"] {
+            let (settings, issues) = parse_settings(text);
+            assert!(!settings.window.always_on_top);
+            assert!(issues.is_empty(), "{text}: {issues:?}");
+        }
+    }
+
+    #[test]
+    fn boolean_always_on_top_selects_the_requested_value_without_issues() {
+        for value in [true, false] {
+            let (settings, issues) = parse_settings(&format!("[window]\nalways_on_top = {value}"));
+            assert_eq!(settings.window.always_on_top, value);
+            assert!(issues.is_empty(), "{value}: {issues:?}");
+        }
+    }
+
+    #[test]
+    fn nonboolean_always_on_top_reports_one_issue_and_keeps_independent_settings() {
+        for body in [
+            "always_on_top = \"true\"",
+            "always_on_top = 1",
+            "always_on_top = 1.0",
+            "always_on_top = 99999999999999999999999999999999999999",
+            "always_on_top = []",
+            "always_on_top = {}",
+            "[window.always_on_top]\nenabled = true",
+        ] {
+            let (settings, issues) = parse_settings(&format!(
+                "theme = \"dark\"\n[window]\nwidth = 900\nheight = 700\nposition = \"top-right\"\nmargin_x = 0\nmargin_y = 32\n{body}"
+            ));
+            assert_eq!(
+                settings,
+                Settings {
+                    theme: ThemeSetting::Dark,
+                    window: WindowSettings {
+                        always_on_top: false,
+                        width: Some(900),
+                        height: Some(700),
+                        position: Some(WindowPosition::TopRight),
+                        margin_x: Some(0),
+                        margin_y: Some(32),
+                    },
+                },
+                "{body}"
+            );
+            assert_eq!(
+                issues,
+                vec![SettingsIssue::InvalidWindowAlwaysOnTop],
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_always_on_top_toml_discards_all_settings() {
+        for body in [
+            "always_on_top = True",
+            "always_on_top = TRUE",
+            "always_on_top = false\nalways_on_top = true",
+            "always_on_top = true\nalways_on_top = false",
+            "always_on_top = true\nbroken = [",
+        ] {
+            let (settings, issues) = parse_settings(&format!(
+                "theme = \"dark\"\n[window]\nwidth = 900\nheight = 700\nposition = \"top-right\"\n{body}"
+            ));
+            assert_eq!(settings, Settings::default(), "{body}");
+            assert!(
+                matches!(issues.as_slice(), [SettingsIssue::Syntax(_)]),
+                "{body}: {issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn always_on_top_has_the_same_meaning_in_all_table_forms() {
+        for value in [
+            "true",
+            "false",
+            "\"true\"",
+            "1",
+            "1.0",
+            "99999999999999999999999999999999999999",
+            "[]",
+            "{}",
+        ] {
+            for body in [
+                format!("[window]\r\nalways_on_top = {value} # 表示\r\nwidth = 900\r\nposition = \"top-right\""),
+                format!("window = {{ always_on_top = {value}, width = 900, position = \"top-right\" }}"),
+                format!("window.always_on_top = {value} # 表示\r\nwindow.width = 900\r\nwindow.position = \"top-right\""),
+            ] {
+                let (settings, issues) = parse_settings(&format!("# 日本語\r\ntheme = \"dark\"\r\n{body}"));
+                assert_eq!(
+                    settings,
+                    Settings {
+                        theme: ThemeSetting::Dark,
+                        window: WindowSettings {
+                            always_on_top: value == "true",
+                            width: Some(900),
+                            position: Some(WindowPosition::TopRight),
+                            ..Default::default()
+                        },
+                    },
+                    "{body}"
+                );
+                assert_eq!(
+                    issues,
+                    if matches!(value, "true" | "false") {
+                        vec![]
+                    } else {
+                        vec![SettingsIssue::InvalidWindowAlwaysOnTop]
+                    },
+                    "{body}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn always_on_top_issues_keep_the_window_and_top_level_lexical_order() {
+        let (settings, issues) = parse_settings(
+            "zebra = 1\ntheme = true\nalpha = 1\n[window]\nzebra = 1\nwidth = 900\nposition = false\nmargin_y = 16\nmargin_x = -1\nheight = 0\nalways_on_top = \"true\"\nalpha = 1",
+        );
+        assert_eq!(
+            settings,
+            Settings {
+                window: WindowSettings {
+                    width: Some(900),
+                    margin_y: Some(16),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            issues,
+            vec![
+                SettingsIssue::UnknownKey("alpha".into()),
+                SettingsIssue::InvalidTheme,
+                SettingsIssue::UnknownKey("window.alpha".into()),
+                SettingsIssue::InvalidWindowAlwaysOnTop,
+                SettingsIssue::InvalidWindowDimension("height"),
+                SettingsIssue::InvalidWindowMargin("margin_x"),
+                SettingsIssue::InvalidWindowPosition,
+                SettingsIssue::UnknownKey("window.zebra".into()),
+                SettingsIssue::UnknownKey("zebra".into()),
+            ]
+        );
+    }
 
     #[test]
     fn omitted_or_empty_window_uses_defaults_without_issues() {
@@ -565,7 +729,12 @@ mod tests {
 
     #[test]
     fn nontable_window_reports_one_issue_and_keeps_the_theme() {
-        for body in ["window = 1", "window = []", "[[window]]\nwidth = 1000"] {
+        for body in [
+            "window = 1",
+            "window = true",
+            "window = []",
+            "[[window]]\nwidth = 1000\nalways_on_top = true",
+        ] {
             let (settings, issues) = parse_settings(&format!("theme = \"dark\"\n{body}"));
             assert_eq!(settings.theme, ThemeSetting::Dark);
             assert_eq!(settings.window, WindowSettings::default());
@@ -855,6 +1024,10 @@ mod tests {
             (
                 "window = 1",
                 vec!["window must be a table; using default window settings"],
+            ),
+            (
+                "[window]\nalways_on_top = \"true\"",
+                vec!["window.always_on_top must be true or false; using false"],
             ),
             (
                 "[window]\nwidth = 0\nheight = +1000\nfoo = true",
