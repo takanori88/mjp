@@ -69,9 +69,26 @@ width = 1000
 height = 700
 ```
 
-Dimensions use logical pixels (points on macOS), excluding the title bar. Previews open centered; an omitted or invalid width uses 800, and an omitted or invalid height uses 600. Each value must be an integer written with ASCII digits only, from `1` to `4294967295`. Signs (`+1000`), separators (`1_000`), base prefixes (`0x3e8`), floats, and strings are rejected with a warning for that field; the other dimension and theme still apply. A non-table `window` uses default dimensions with one warning. Unknown keys directly under `window` each produce a warning; unknown nested tables produce one warning without inspecting their contents. Invalid TOML, including `01` or duplicate keys, discards all settings.
+Dimensions use logical pixels (points on macOS), excluding the title bar. Previews open centered unless a position is configured below; an omitted or invalid width uses 800, and an omitted or invalid height uses 600. Each value must be an integer written with ASCII digits only, from `1` to `4294967295`. Signs (`+1000`), separators (`1_000`), base prefixes (`0x3e8`), floats, and strings are rejected with a warning for that field; the other dimension and theme still apply. A non-table `window` uses default dimensions with one warning. Unknown keys directly under `window` each produce a warning; unknown nested tables produce one warning without inspecting their contents. Invalid TOML, including `01` or duplicate keys, discards all settings.
 
-A valid explicit dimension enables Tauri's initial overflow prevention against the primary display's work area. The OS and display can constrain the actual content size; the entire title bar is not guaranteed to fit. Without valid explicit dimensions, the existing centered 800×600 behavior is retained. Manual resizing or moving to another display does not trigger another fit. These settings apply to document, stdin, Welcome, and failure previews, including windows added later to the same process. Restart the receiving process to use changed settings.
+A valid explicit dimension enables Tauri's initial overflow prevention against the primary display's work area. The OS and display can constrain the actual content size; the entire title bar is not guaranteed to fit. Without valid explicit dimensions, the existing 800×600 size is retained. Manual resizing or moving to another display does not trigger another fit. These settings apply to document, stdin, Welcome, and failure previews, including windows added later to the same process. Restart the receiving process to use changed settings.
+
+### Window position configuration
+
+Open previews at the top right of the primary display's work area (excluding the menu bar and Dock) in the same configuration file. If you also set dimensions, combine these keys in one `[window]` table:
+
+```toml
+[window]
+position = "top-right"
+margin_x = 16
+margin_y = 16
+```
+
+`margin_x` is the distance from the right edge and `margin_y` from the top edge, in logical pixels (points on macOS). Each defaults to 16 and accepts integers from `0` to `4294967295`, written with ASCII digits only. Invalid margins produce one warning per field and use 16; valid margins without `position` are accepted silently and have no placement effect. Only the case-sensitive string `"top-right"` is supported. An omitted position keeps centered placement without cascading; an invalid position does the same with a warning. If the primary display cannot be obtained, previews open centered without a warning and keep the configured dimensions.
+
+Successive windows in the same process cascade 24 points left and down. The step is fixed. Positions wrap after the number that fit in the work area, so displayed positions can overlap. New windows reuse the smallest free cascade slot after closed windows are destroyed; moving a window manually does not change its slot. Welcome and failure previews share these rules. While Welcome occupies slot 0, the first document uses slot 1, and Welcome closes only after that document window is created successfully. Reopening an already open document only focuses it. Separate processes, including separate CLI launches, do not coordinate their positions.
+
+The work area is read for each new window. Margins shrink when necessary to prioritize fitting; a content dimension larger than the work area aligns that axis to its left or top edge. Explicit dimensions still use the size fitting described above. Positioning aligns the outer top-left corner, but the title bar is not included in the bottom-edge calculation, so the outer bottom edge may extend by its height. Restart the receiving process after changing configuration. Native placement, title-bar accessibility, multiple displays, and Dock variations remain to be checked on the target Mac.
 
 ### Opening files from Finder
 
