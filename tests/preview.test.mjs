@@ -33,6 +33,12 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
     geometry.set(Math.round((left + window.scrollX) * 1e6), this);
     return [{ ...rect, left }];
   };
+  // jsdom rounds serialized lengths like browsers, so reading style.left back would lose the identifying digits.
+  const assignedLeft = new WeakMap();
+  let style = Object.getPrototypeOf(window.document.createElement('span').style);
+  while (!Object.hasOwn(style, 'left')) style = Object.getPrototypeOf(style);
+  const left = Object.getOwnPropertyDescriptor(style, 'left');
+  Object.defineProperty(style, 'left', { ...left, set(value) { assignedLeft.set(this, value); left.set.call(this, value); } });
   const observers = [];
   window.ResizeObserver = class {
     targets = new Set();
@@ -64,7 +70,7 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
     target.dispatchEvent(event);
     return event;
   };
-  return { window, article, status, calls, pending, boot, by, to, key, geometry, frames, observers,
+  return { window, article, status, calls, pending, boot, by, to, key, geometry, assignedLeft, frames, observers,
     frame: () => {
       const callbacks = [...frames.values()];
       frames.clear();
@@ -97,7 +103,7 @@ test('subscribes before reading and renders subsequent document notifications', 
 function drawnRanges(f) {
   f.frame();
   const boxes = [...f.window.document.querySelectorAll('.search-mark')];
-  const rangeFor = box => f.geometry.get(Math.round(parseFloat(box.style.left) * 1e6));
+  const rangeFor = box => f.geometry.get(Math.round(parseFloat(f.assignedLeft.get(box.style)) * 1e6));
   return { all: boxes.map(rangeFor), current: boxes.filter(box => box.classList.contains('search-mark-current')).map(rangeFor) };
 }
 
