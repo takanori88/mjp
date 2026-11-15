@@ -16,7 +16,7 @@ function sanitizeDiagram(output: string): Element {
     ADD_TAGS: ["foreignObject"],
     HTML_INTEGRATION_POINTS: { foreignobject: true },
     RETURN_DOM_FRAGMENT: true,
-    FORBID_TAGS: ["a", "image", "img", "iframe", "object", "embed", "form", "input", "button", "script"],
+    FORBID_TAGS: ["a", "image", "feImage", "img", "video", "audio", "source", "iframe", "object", "embed", "form", "input", "button", "script"],
   });
   const svg = fragment.firstElementChild;
   if (fragment.children.length !== 1 || svg?.localName !== "svg" ||
@@ -81,7 +81,7 @@ export function createDiagramQueue(loadRenderer: LoadDiagramRenderer) {
       }
     }
 
-    queue = queue.then(run);
+    queue = queue.then(run).catch(() => {});
     return () => { active = false; };
   };
 }

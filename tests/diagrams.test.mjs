@@ -12,7 +12,7 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function setup(t, draw = async source => svg(source.trim()), load) {
+function setup(t, draw = async source => svg(source.trim()), load, onLayoutChange) {
   const { window } = new JSDOM('<article></article><aside></aside>');
   t.after(() => window.close());
   window.scrollTo = () => {};
@@ -24,7 +24,7 @@ function setup(t, draw = async source => svg(source.trim()), load) {
   let loads = 0, changes = 0, revision = 0;
   const renderer = async (...args) => { calls.push(args); return draw(...args); };
   const render = createDocumentRenderer(article, status, undefined, undefined, async () => {},
-    () => { loads++; return load ? load(renderer) : Promise.resolve(renderer); }, () => { changes++; });
+    () => { loads++; return load ? load(renderer) : Promise.resolve(renderer); }, () => { changes++; onLayoutChange?.(); });
   return { window, article, status, calls, get loads() { return loads; }, get changes() { return changes; },
     renderSnapshot: render,
     setDark: value => { dark = value; },
@@ -100,8 +100,12 @@ test('keeps the current diagram when only status changes or an older revision ar
 
 test('keeps labels and styles while removing unsupported diagram elements and attributes', async t => {
   const f = setup(t, async () => '<svg xmlns="http://www.w3.org/2000/svg" onload="example()">' +
+    '<defs><filter id="media"><feImage href="https://example.invalid/filter.png"/></filter></defs>' +
     '<style>#diagram {fill:red}</style><g style="fill:blue" onclick="example()">' +
     '<foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><span style="color:red">Label</span>' +
+    '<video src="https://example.invalid/video"><source src="https://example.invalid/video-source"></video>' +
+    '<audio src="https://example.invalid/audio"><source src="https://example.invalid/audio-source"></audio>' +
+    '<source src="https://example.invalid/source">' +
     '<img src=x onerror="example()"><iframe>frame</iframe><object>object</object><embed><form><input><button>button</button></form></div></foreignObject>' +
     '<a href="https://example.com"><text>Link text</text></a><image href="x"/><script>example()</script></g></svg>');
   f.render(fence('A'));
@@ -114,9 +118,25 @@ test('keeps labels and styles while removing unsupported diagram elements and at
   assert.equal(result.querySelector('span').getAttribute('style'), 'color:red');
   assert.match(result.textContent, /Link text/);
   assert.equal(result.querySelector('script, img, iframe, a, image, object, embed, form, input, button'), null);
+  for (const tag of ['feImage', 'video', 'audio', 'source']) assert.equal(result.querySelector(tag), null, tag);
   for (const node of [result, ...result.querySelectorAll('*')]) {
     assert.equal([...node.attributes].some(attribute => /^on/i.test(attribute.name)), false);
   }
+});
+
+test('draws a later document after its predecessor layout notification throws', async t => {
+  const f = setup(t, undefined, undefined, () => {
+    if (f.changes === 1) throw new Error('Layout notification unavailable');
+  });
+  f.render(fence('first'));
+  await settle();
+  assert.equal(f.article.querySelector('svg text').textContent, 'first');
+  f.render(fence('next'));
+  await settle();
+  assert.deepEqual(f.calls.map(call => call[0]), ['first\n', 'next\n']);
+  assert.equal(f.article.querySelector('svg text').textContent, 'next');
+  assert.equal(f.loads, 1);
+  assert.equal(f.changes, 2);
 });
 
 test('keeps failed source and a literal first-line error while continuing subsequent diagrams', async t => {
