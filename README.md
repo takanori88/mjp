@@ -17,6 +17,7 @@ mjp README.md
 - Renders Markdown, including tables and task lists, with one preview per file.
 - Opens `.md` and `.markdown` files from macOS Finder.
 - Highlights fenced code blocks for common languages.
+- Renders Mermaid fences as diagrams, up to 20 per formatted document.
 - Copies fenced code blocks with a button or keyboard activation.
 - Displays local PNG, JPEG, GIF, and WebP images referenced in Markdown.
 - Searches within the displayed document in Markdown and plain-text views.

@@ -159,9 +159,9 @@ Do not add features solely because they seem useful. Keep the quick preview expe
 
 ## 7. Mermaid and KaTeX
 
-Mermaid and KaTeX could be valuable, but are not required for the MVP. Revisit them in Phase 2 after basic Markdown rendering and startup speed are satisfactory.
+Mermaid diagrams are now supported in formatted Markdown documents. A fence whose first info word is exactly `mermaid` displays as a diagram; other spellings remain code. KaTeX math rendering remains deferred.
 
-For example, a future preview could recognize:
+For example:
 
 ````markdown
 ```mermaid
@@ -169,6 +169,8 @@ graph LR
     A --> B
 ```
 ````
+
+Draw only the first 20 Mermaid blocks, with at most 50,000 UTF-16 code units of source per block. Leave the source with an explanatory note when drawing is skipped or fails. Diagram text and source are excluded from document search, diagram sources have no copy buttons, and already drawn diagrams do not follow later appearance changes. See [PLAN.md](PLAN.md#mermaid-diagrams) for the rendering boundaries and design choices.
 
 ## 8. Technical direction
 

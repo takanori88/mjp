@@ -17,6 +17,7 @@ mjp README.md
 - 表やタスクリストを含む Markdown をファイルごとのウィンドウに表示
 - macOS の Finder から `.md`・`.markdown` ファイルを開く
 - 主な言語の fenced code block をシンタックスハイライト
+- Markdownとして整形する文書のMermaidフェンスを20個まで図として表示
 - フェンス付きコードブロックをボタンやキーボード操作でコピー
 - Markdown から参照するローカルの PNG・JPEG・GIF・WebP 画像を表示
 - Markdown とプレーンテキストの両方で表示中の文書内を検索
