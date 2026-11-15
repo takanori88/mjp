@@ -2,6 +2,7 @@ import { installInputGuards } from "./input.ts";
 import { createDocumentRenderer, externalUrl, type Snapshot } from "./render.ts";
 import type { ReadImage } from "./images.ts";
 import type { WriteText } from "./copy.ts";
+import type { LoadDiagramRenderer } from "./diagrams.ts";
 
 type PreviewBridge = {
   getDocument: () => Promise<Snapshot>;
@@ -12,6 +13,7 @@ type PreviewBridge = {
   writeText: WriteText;
   mark?: (stage: string) => void;
   loadSearch?: () => Promise<typeof import("./search.ts")>;
+  loadDiagramRenderer?: LoadDiagramRenderer;
 };
 
 export async function startPreview(
@@ -25,12 +27,13 @@ export async function startPreview(
   const getComputedStyle = window.getComputedStyle.bind(window);
   installInputGuards(article, window);
 
+  let search: ReturnType<typeof import("./search.ts")["createSearch"]> | undefined;
   const render = createDocumentRenderer(
     article, status, bridge.mark, bridge.getImage, bridge.writeText,
+    bridge.loadDiagramRenderer, () => search?.layoutChanged(),
   );
 
   let requestNumber = 0;
-  let search: ReturnType<typeof import("./search.ts")["createSearch"]> | undefined;
   let searchLoading: Promise<void> | undefined;
   let searchWanted = false;
   let disposed = false;
@@ -65,10 +68,11 @@ export async function startPreview(
     const number = ++requestNumber;
     try {
       const snapshot = await bridge.getDocument();
+      if (disposed || number !== requestNumber) return;
       bridge.mark?.("document_received");
-      if (number === requestNumber && render(snapshot)) search?.documentReplaced();
+      if (render(snapshot)) search?.documentReplaced();
     } catch (error) {
-      if (number !== requestNumber) return;
+      if (disposed || number !== requestNumber) return;
       status.hidden = false;
       status.textContent = `Cannot display file: ${String(error)}`;
     }

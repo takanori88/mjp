@@ -449,6 +449,7 @@ test('preserves preformatted whitespace across highlighted inline nodes', t => {
 for (const excluded of [
   '<div class="code-actions"><button>omit</button></div>',
   '<div class="direction-note">omit</div>', '<span data-mjp-image="0">omit</span>',
+  '<div data-mjp-diagram="0">omit</div>',
   '<div role="search"><input value="omit">omit</div>',
 ]) {
   test(`excludes auxiliary content and separates adjacent text: ${excluded}`, t => {
@@ -557,4 +558,35 @@ test('search highlighting preserves rendered code copying and external link acti
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(copies, ['const foo = "foo";\n']);
   assert.deepEqual(links, ['https://example.com/']);
+});
+
+test('repositions confirmed search marks and the badge without changing matches after a diagram layout change', t => {
+  const f = searchControllerFixture(t);
+  let top = 100.25;
+  f.window.Range.prototype.getBoundingClientRect = () => rect(top, 140, 100);
+  searchAndDraw(f);
+  f.controller.commit();
+  f.controller.move(1);
+  f.frame();
+  const badge = f.article.parentElement.querySelector('.search-count');
+  assert.equal(badge.textContent, '[2/2]');
+  const boxes = overlayBoxes(f);
+  assert.equal(boxes.length, 2);
+  assert.equal(boxes[1].classList.contains('search-mark-current'), true);
+  const oldBadgeTop = parseFloat(badge.style.top);
+  top += 150;
+  f.controller.layoutChanged();
+  f.controller.layoutChanged();
+  assert.equal(f.frames.size, 1);
+  f.frame();
+  assert.deepEqual(overlayBoxes(f), boxes);
+  assert.equal(parseFloat(boxes[0].style.top), top);
+  assert.equal(parseFloat(badge.style.top), oldBadgeTop + 150);
+  assert.equal(badge.textContent, '[2/2]');
+  assert.equal(f.controller.input.value, 'short');
+  assert.equal(f.controller.isOpen, false);
+  assert.equal(boxes[1].classList.contains('search-mark-current'), true);
+  f.controller.dispose();
+  f.controller.layoutChanged();
+  assert.equal(f.frames.size, 0);
 });

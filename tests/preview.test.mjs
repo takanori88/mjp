@@ -7,7 +7,7 @@ globalThis.window = new JSDOM().window;
 const { startPreview } = await import('../src/preview.ts');
 const snapshot = (text, revision = 0, error = null) => ({ text, revision, error, warning: null });
 
-async function setup(t, deferred = false, loadSearch = async () => searchModule) {
+async function setup(t, deferred = false, loadSearch = async () => searchModule, loadDiagramRenderer) {
   const { window } = new JSDOM('<article></article><aside></aside>');
   t.after(() => window.close());
   const article = window.document.querySelector('article');
@@ -61,6 +61,7 @@ async function setup(t, deferred = false, loadSearch = async () => searchModule)
     openExternal: async url => { calls.push(['open', url]); },
     writeText: async text => { calls.push(['copy', text]); },
     loadSearch: () => { calls.push('search'); return loadSearch(); },
+    loadDiagramRenderer,
   });
   await new Promise(resolve => setImmediate(resolve));
   if (!deferred) await boot;
@@ -1560,3 +1561,48 @@ test('connects code copying to the bridge and leaves button keys available', asy
   assert.equal(f.key('Escape', {}, button).defaultPrevented, true);
   assert.equal(f.calls.includes('close'), true);
 });
+
+for (const fails of [false, true]) {
+  test(`leaves a disposed preview unchanged when document retrieval ${fails ? 'fails' : 'succeeds'}`, async t => {
+    let loads = 0;
+    const f = await setup(t, true, undefined, async () => {
+      loads++;
+      return async () => '<svg></svg>';
+    });
+    f.window.dispatchEvent(new f.window.Event('pagehide'));
+    if (fails) f.pending[0].reject(new Error('Late read error'));
+    else f.pending[0].resolve(snapshot('```mermaid\nA\n```'));
+    await f.boot;
+    await settle();
+    assert.equal(loads, 0);
+    assert.equal(f.article.childNodes.length, 0);
+    assert.equal(f.status.textContent, '');
+  });
+}
+
+for (const fails of [false, true]) {
+  test(`connects diagram ${fails ? 'failure' : 'completion'} to search layout updates`, async t => {
+    let finish, reject;
+    let updates = 0;
+    const f = await setup(t, false, async () => ({
+      createSearch(...args) {
+        const controller = searchModule.createSearch(...args);
+        t.after(() => controller.dispose());
+        return { ...controller, layoutChanged() { updates++; controller.layoutChanged(); } };
+      },
+    }), async () => () => new Promise((yes, no) => { finish = yes; reject = no; }));
+    f.key('/');
+    await settle();
+    f.setSnapshot(snapshot('```mermaid\nA\n```', 1));
+    await f.changed();
+    await settle();
+    assert.equal(typeof finish, 'function');
+    assert.equal(updates, 0);
+    if (fails) reject(new Error('Cannot draw'));
+    else finish('<svg></svg>');
+    await settle();
+    assert.equal(updates, 1);
+    assert.equal(Boolean(f.article.querySelector('.diagram-note')), fails);
+    assert.equal(Boolean(f.article.querySelector('svg')), !fails);
+  });
+}

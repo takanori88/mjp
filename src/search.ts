@@ -60,7 +60,7 @@ const blockTags = new Set([
   "P", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "TD", "TH", "PRE",
   "BLOCKQUOTE", "DT", "DD", "HR", "TABLE", "TR", "UL", "OL", "DIV",
 ]);
-const excludedSelector = '.code-actions, .direction-note, [data-mjp-image], [role="search"]';
+const excludedSelector = '.code-actions, .direction-note, [data-mjp-image], [data-mjp-diagram], [role="search"]';
 
 function pointAt(runs: TextRun[], offset: number, end: boolean): Point {
   let low = 0;
@@ -554,6 +554,9 @@ export function createSearch(article: HTMLElement, options: SearchOptions = {}) 
       paint();
       reveal();
       return true;
+    },
+    layoutChanged(): void {
+      if (!disposed) schedulePosition();
     },
     documentReplaced(): void {
       if (disposed) return;
