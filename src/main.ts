@@ -13,6 +13,7 @@ await startPreview(
     close: () => invoke("close_preview"),
     openExternal: url => invoke("open_external", { url }),
     writeText: text => navigator.clipboard.writeText(text),
+    loadDiagramRenderer: () => import("./mermaid.ts").then(module => module.renderMermaid),
     mark: import.meta.env.VITE_MJP_PERF === "1"
       ? stage => {
         void invoke("perf_mark", { stage, renderedMs: performance.timeOrigin + performance.now() });
