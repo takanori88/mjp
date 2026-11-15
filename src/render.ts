@@ -4,6 +4,7 @@ import taskLists from "markdown-it-task-lists";
 import { highlightCode, highlighter } from "./highlight.ts";
 import { addCodeCopyButtons, type WriteText } from "./copy.ts";
 import { isLocalImage, loadImages, MAX_IMAGES, type ImageReference, type ReadImage } from "./images.ts";
+import { createDiagramQueue, isMermaidFence, type LoadDiagramRenderer } from "./diagrams.ts";
 
 export type Snapshot = {
   text: string;
@@ -15,6 +16,12 @@ export type Snapshot = {
 const markdown = new MarkdownIt({ html: false, breaks: false }).use(taskLists);
 const renderFence = markdown.renderer.rules.fence!;
 markdown.renderer.rules.fence = (tokens, index, options, env, renderer) => {
+  const token = tokens[index];
+  const sources = env?.diagrams as string[] | undefined;
+  if (isMermaidFence(token.info) && sources) {
+    const diagramIndex = sources.push(token.content) - 1;
+    return `<div class="mermaid-diagram" data-mjp-diagram="${diagramIndex}"><pre><code>${markdown.utils.escapeHtml(token.content)}</code></pre></div>\n`;
+  }
   tokens[index].attrSet("data-mjp-fence", "");
   return renderFence(tokens, index, options, env, renderer);
 };
@@ -53,6 +60,8 @@ export function createDocumentRenderer(
   mark?: (stage: string) => void,
   readImage?: ReadImage,
   writeText?: WriteText,
+  loadDiagramRenderer?: LoadDiagramRenderer,
+  onLayoutChange?: () => void,
 ): (snapshot: Snapshot) => boolean {
   const view = article.ownerDocument.defaultView!;
   let lastRevision = -1;
@@ -60,9 +69,12 @@ export function createDocumentRenderer(
   let lastPlainText = false;
   let disposeImages = () => {};
   let disposeCopyButtons = () => {};
+  let disposeDiagrams = () => {};
+  const renderDiagrams = loadDiagramRenderer ? createDiagramQueue(loadDiagramRenderer) : undefined;
   view.addEventListener("pagehide", () => {
     disposeImages();
     disposeCopyButtons();
+    disposeDiagrams();
   });
   return function render(snapshot: Snapshot): boolean {
     if (snapshot.revision < lastRevision) return false;
@@ -79,6 +91,7 @@ export function createDocumentRenderer(
     const stage = lastText === null ? "first_render" : "reload_render";
     disposeImages();
     disposeCopyButtons();
+    disposeDiagrams();
     const scrollY = view.scrollY;
     if (plainText) {
       const pre = article.ownerDocument.createElement("pre");
@@ -87,7 +100,8 @@ export function createDocumentRenderer(
       mark?.("dom_inserted");
     } else {
       const images: ImageReference[] = [];
-      const raw = markdown.render(snapshot.text, { images });
+      const diagrams: string[] = [];
+      const raw = markdown.render(snapshot.text, { images, diagrams });
       mark?.("markdown_parsed");
       article.innerHTML = DOMPurify.sanitize(raw, {
         FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "img", "svg"],
@@ -117,6 +131,7 @@ export function createDocumentRenderer(
       }
       if (writeText) disposeCopyButtons = addCodeCopyButtons(article, writeText);
       if (readImage) disposeImages = loadImages(article, images, readImage);
+      if (renderDiagrams && diagrams.length) disposeDiagrams = renderDiagrams(article, diagrams, onLayoutChange);
     }
     lastPlainText = plainText;
     lastText = snapshot.text;
