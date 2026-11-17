@@ -76,3 +76,20 @@ jobs:
       - name: Test Rust
         working-directory: src-tauri
         run: cargo test --locked
+
+      - name: Check generated capabilities
+        run: node tests/check-capabilities.mjs
+
+      - name: Build perf capabilities
+        working-directory: src-tauri
+        run: cargo check --locked --features perf
+
+      - name: Check generated perf capabilities
+        run: node tests/check-capabilities.mjs --perf
+
+      - name: Restore normal capabilities
+        working-directory: src-tauri
+        run: cargo check --locked
+
+      - name: Check restored normal capabilities
+        run: node tests/check-capabilities.mjs
