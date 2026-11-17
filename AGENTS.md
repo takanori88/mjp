@@ -56,6 +56,7 @@ npm run build
 cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
+node tests/check-capabilities.mjs
 ```
 
 完了を報告するときは次を守る。
