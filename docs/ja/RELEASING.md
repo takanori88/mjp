@@ -15,6 +15,7 @@ npm run build
 cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
+node tests/check-capabilities.mjs
 npm run build:release -- --bundles app -- --locked
 ./src-tauri/target/release/mjp --version
 ./src-tauri/target/release/mjp --help
@@ -27,7 +28,7 @@ npm、Cargo、Tauri のバージョンが一致することを確認します（
 
 [Dependabot](../../.github/dependabot.yml) は `src-tauri` の Cargo、ルートの npm、GitHub Actions を `Asia/Tokyo` の毎週月曜日に確認し、バージョン更新 PR はエコシステムごとに最大5件まで開きます。メジャー更新も対象です。CI 成功後に人間がレビューして手動マージします。この設定では自動マージや更新のグループ化を有効にしません。PR が多く保守しにくくなった場合にグループ化を検討します。
 
-[CI ワークフロー](../../.github/workflows/ci.yml) は Dependabot を含む PR と `main` への push で動作します。`macOS checks` ジョブは macOS 15 Apple Silicon Runner、`package.json` の対応範囲の Node.js、rustfmt と Clippy を含む Rust 1.99.0 を使用します。`npm ci`、既存テスト、フロントエンドビルドの後、Rust のフォーマット、警告をエラーとする Clippy、Rust テストを実行します。Cargo の検証ではコミット済みロックファイルを使用します。これは CI に選んだツールチェーンであり、マニフェストが許容する全 Rust バージョンを検証するものではありません。
+[CI ワークフロー](../../.github/workflows/ci.yml) は Dependabot を含む PR と `main` への push で動作します。`macOS checks` ジョブは macOS 15 Apple Silicon Runner、`package.json` の対応範囲の Node.js、rustfmt と Clippy を含む Rust 1.99.0 を使用します。`npm ci`、既存テスト、フロントエンドビルドの後、Rust のフォーマット、警告をエラーとする Clippy、Rust テストを実行します。続いて通常ビルドの生成済み capability を検査し、`cargo check --locked --features perf` と perf 用の検査、`cargo check --locked` と通常ビルドへ戻した後の検査を実行します。Cargo の検証ではコミット済みロックファイルを使用します。これは CI に選んだツールチェーンであり、マニフェストが許容する全 Rust バージョンを検証するものではありません。
 
 GitHub 公式 Action は完全なコミット SHA で固定します。npm のダウンロードと Cargo のレジストリ・インデックス・Git ダウンロードをキャッシュし、インストール済みモジュールやコンパイル済み成果物は再構築します。リポジトリトークンは読み取り専用とし、checkout の認証情報を残さず、リポジトリシークレットを必要としません。Release 作成、署名、公証は行いません。既存の Dependency graph、各種アラート、Dependabot security updates の設定は維持します。
 

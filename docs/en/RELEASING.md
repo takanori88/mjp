@@ -15,6 +15,7 @@ npm run build
 cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
+node tests/check-capabilities.mjs
 npm run build:release -- --bundles app -- --locked
 ./src-tauri/target/release/mjp --version
 ./src-tauri/target/release/mjp --help
@@ -27,7 +28,7 @@ Confirm the npm, Cargo, and Tauri versions agree (currently 0.1.0). On the targe
 
 [Dependabot](../../.github/dependabot.yml) checks Cargo in `src-tauri`, npm at the root, and GitHub Actions every Monday in `Asia/Tokyo`, with at most five open version-update PRs per ecosystem. Major updates remain eligible. Review and merge updates manually after CI succeeds; automatic merging and update grouping are not enabled by this configuration. Reconsider grouping only if the PR volume becomes difficult to maintain.
 
-The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests, including Dependabot PRs, and pushes to `main`. The `macOS checks` job uses a macOS 15 Apple Silicon runner, Node.js from `package.json`'s supported range, and Rust 1.99.0 with rustfmt and Clippy. It installs with `npm ci`, runs the existing tests and frontend build, then checks Rust formatting, Clippy with warnings denied, and Rust tests. Cargo checks use the committed lockfile. This is the selected CI toolchain, not verification of every Rust version allowed by the manifest.
+The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests, including Dependabot PRs, and pushes to `main`. The `macOS checks` job uses a macOS 15 Apple Silicon runner, Node.js from `package.json`'s supported range, and Rust 1.99.0 with rustfmt and Clippy. It installs with `npm ci`, runs the existing tests and frontend build, then checks Rust formatting, Clippy with warnings denied, and Rust tests. It then checks the generated capabilities for the normal build, runs `cargo check --locked --features perf` and checks the perf capabilities, and runs `cargo check --locked` and checks the restored normal capabilities. Cargo checks use the committed lockfile. This is the selected CI toolchain, not verification of every Rust version allowed by the manifest.
 
 GitHub's Actions are pinned to full commit SHAs. npm downloads and Cargo registry/index/Git downloads are cached; installed modules and compiled artifacts are rebuilt. The workflow uses a read-only repository token, does not persist checkout credentials, and requires no repository secrets. It does not publish releases or perform signing or notarization. Keep the existing dependency graph, alerts, and Dependabot security-update settings.
 

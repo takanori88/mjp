@@ -13,7 +13,7 @@ This table records the direct application dependencies (and tauri-build) resolve
 | highlight.js | 11.12.0 | BSD-3-Clause | https://www.npmjs.com/package/highlight.js/v/11.12.0 |
 | markdown-it | 15.0.2 | MIT | https://www.npmjs.com/package/markdown-it/v/15.0.2 |
 | markdown-it-task-lists | 2.1.1 | ISC | https://www.npmjs.com/package/markdown-it-task-lists/v/2.1.1 |
-| mermaid | 12.2.0 | MIT | https://www.npmjs.com/package/mermaid/v/12.2.0 |
+| mermaid | 12.3.0 | MIT | https://www.npmjs.com/package/mermaid/v/12.3.0 |
 | tauri | 2.12.1 | Apache-2.0 OR MIT | https://crates.io/crates/tauri/2.12.1 |
 | tauri-build (build) | 2.7.1 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-build/2.7.1 |
 | tauri-plugin-opener | 2.7.0 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-opener/2.7.0 |
